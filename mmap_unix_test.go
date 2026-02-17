@@ -11,6 +11,20 @@ import (
 	"unsafe"
 )
 
+func deferMunmap(t *testing.T, addr uintptr, length int) {
+	t.Helper()
+	if err := munmapAt(addr, length); err != nil {
+		t.Errorf("munmapAt cleanup: %v", err)
+	}
+}
+
+func deferSysMunmap(t *testing.T, b []byte) {
+	t.Helper()
+	if err := syscall.Munmap(b); err != nil {
+		t.Errorf("syscall.Munmap cleanup: %v", err)
+	}
+}
+
 func TestPageAlign(t *testing.T) {
 	tests := []struct {
 		name string
@@ -56,8 +70,9 @@ func TestMapRoundTrip(t *testing.T) {
 		t.Fatalf("read back %#x, want 0xDEADBEEF", got)
 	}
 
-	if err := munmapAt(r.base, r.maxVA); err != nil {
-		t.Fatalf("munmap: %v", err)
+	unmapErr := munmapAt(r.base, r.maxVA)
+	if unmapErr != nil {
+		t.Fatalf("munmap: %v", unmapErr)
 	}
 
 	f2, err := os.Open(f.Name())
@@ -70,7 +85,7 @@ func TestMapRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Map reopen: %v", err)
 	}
-	defer munmapAt(r2.base, r2.maxVA)
+	defer func() { deferMunmap(t, r2.base, r2.maxVA) }()
 
 	buf2 := unsafe.Slice((*byte)(unsafe.Pointer(r2.base)), size)
 	got2 := binary.LittleEndian.Uint64(buf2[0:8])
@@ -120,7 +135,7 @@ func TestMapReserveVAAutoGrow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Map should succeed when reserveVA < size: %v", err)
 	}
-	defer munmapAt(r.base, r.maxVA)
+	defer func() { deferMunmap(t, r.base, r.maxVA) }()
 
 	if r.maxVA < size {
 		t.Errorf("maxVA = %d, want >= %d", r.maxVA, size)
@@ -138,7 +153,7 @@ func TestMapTruncatesSmallFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Map: %v", err)
 	}
-	defer munmapAt(r.base, r.maxVA)
+	defer func() { deferMunmap(t, r.base, r.maxVA) }()
 
 	info, err := f.Stat()
 	if err != nil {
@@ -157,15 +172,16 @@ func TestMapSkipsTruncateWhenFileAlreadyLargeEnough(t *testing.T) {
 	defer f.Close()
 
 	bigSize := pageSize * 3
-	if err := f.Truncate(int64(bigSize)); err != nil {
-		t.Fatal(err)
+	truncErr := f.Truncate(int64(bigSize))
+	if truncErr != nil {
+		t.Fatal(truncErr)
 	}
 
 	r, err := Map(f, pageSize, false, Sequential, pageSize*4)
 	if err != nil {
 		t.Fatalf("Map: %v", err)
 	}
-	defer munmapAt(r.base, r.maxVA)
+	defer func() { deferMunmap(t, r.base, r.maxVA) }()
 
 	info, err := f.Stat()
 	if err != nil {
@@ -223,8 +239,9 @@ func TestMadviseAtSuccess(t *testing.T) {
 	}
 	defer f.Close()
 
-	if err := f.Truncate(int64(pageSize)); err != nil {
-		t.Fatal(err)
+	truncErr := f.Truncate(int64(pageSize))
+	if truncErr != nil {
+		t.Fatal(truncErr)
 	}
 
 	buf, err := syscall.Mmap(int(f.Fd()), 0, pageSize,
@@ -232,15 +249,15 @@ func TestMadviseAtSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer syscall.Munmap(buf)
+	defer func() { deferSysMunmap(t, buf) }()
 
 	addr := uintptr(unsafe.Pointer(&buf[0]))
 
-	if err := madviseAt(addr, pageSize, syscall.MADV_SEQUENTIAL); err != nil {
-		t.Errorf("madviseAt(SEQUENTIAL): %v", err)
+	if advErr := madviseAt(addr, pageSize, syscall.MADV_SEQUENTIAL); advErr != nil {
+		t.Errorf("madviseAt(SEQUENTIAL): %v", advErr)
 	}
-	if err := madviseAt(addr, pageSize, syscall.MADV_RANDOM); err != nil {
-		t.Errorf("madviseAt(RANDOM): %v", err)
+	if advErr := madviseAt(addr, pageSize, syscall.MADV_RANDOM); advErr != nil {
+		t.Errorf("madviseAt(RANDOM): %v", advErr)
 	}
 }
 
@@ -259,8 +276,8 @@ func TestMunmapAtSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := uintptr(unsafe.Pointer(&buf[0]))
-	if err := munmapAt(addr, pageSize); err != nil {
-		t.Errorf("munmapAt: %v", err)
+	if unmapErr := munmapAt(addr, pageSize); unmapErr != nil {
+		t.Errorf("munmapAt: %v", unmapErr)
 	}
 }
 
@@ -278,8 +295,9 @@ func TestMmapFixedSuccess(t *testing.T) {
 	}
 	defer f.Close()
 
-	if err := f.Truncate(int64(pageSize)); err != nil {
-		t.Fatal(err)
+	truncErr := f.Truncate(int64(pageSize))
+	if truncErr != nil {
+		t.Fatal(truncErr)
 	}
 
 	reserved, err := syscall.Mmap(-1, 0, pageSize*2,
@@ -287,16 +305,16 @@ func TestMmapFixedSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer syscall.Munmap(reserved)
+	defer func() { deferSysMunmap(t, reserved) }()
 
 	addr := uintptr(unsafe.Pointer(&reserved[0]))
 
-	if err := mmapFixed(addr, pageSize, f, false); err != nil {
-		t.Fatalf("mmapFixed: %v", err)
+	if fixErr := mmapFixed(addr, pageSize, f, false); fixErr != nil {
+		t.Fatalf("mmapFixed: %v", fixErr)
 	}
 
-	if err := mmapFixed(addr, pageSize, f, true); err != nil {
-		t.Fatalf("mmapFixed writable: %v", err)
+	if fixErr := mmapFixed(addr, pageSize, f, true); fixErr != nil {
+		t.Fatalf("mmapFixed writable: %v", fixErr)
 	}
 }
 
@@ -312,7 +330,7 @@ func TestMmapFixedBadFd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer syscall.Munmap(reserved)
+	defer func() { deferSysMunmap(t, reserved) }()
 
 	addr := uintptr(unsafe.Pointer(&reserved[0]))
 	err = mmapFixed(addr, pageSize, f, false)
@@ -332,7 +350,7 @@ func TestMapDefaultReserveVA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Map: %v", err)
 	}
-	defer munmapAt(r.base, r.maxVA)
+	defer func() { deferMunmap(t, r.base, r.maxVA) }()
 
 	expected := pageAlign(DefaultMaxVA)
 	if pageAlign(1) > expected {
@@ -354,7 +372,7 @@ func TestMapZeroReserveVAUsesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Map: %v", err)
 	}
-	defer munmapAt(r.base, r.maxVA)
+	defer func() { deferMunmap(t, r.base, r.maxVA) }()
 }
 
 func TestMapWithRandomAccess(t *testing.T) {
@@ -368,7 +386,7 @@ func TestMapWithRandomAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Map with Random access: %v", err)
 	}
-	defer munmapAt(r.base, r.maxVA)
+	defer func() { deferMunmap(t, r.base, r.maxVA) }()
 
 	if r.access != Random {
 		t.Errorf("access = %d, want Random (%d)", r.access, Random)
@@ -387,7 +405,7 @@ func TestRegionSizeStored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Map: %v", err)
 	}
-	defer munmapAt(r.base, r.maxVA)
+	defer func() { deferMunmap(t, r.base, r.maxVA) }()
 
 	if r.size.Load() != int64(size) {
 		t.Errorf("size = %d, want %d", r.size.Load(), size)
@@ -401,8 +419,9 @@ func TestMapMmapFixedError(t *testing.T) {
 	}
 	defer f.Close()
 
-	if err := f.Truncate(int64(pageSize)); err != nil {
-		t.Fatal(err)
+	truncErr := f.Truncate(int64(pageSize))
+	if truncErr != nil {
+		t.Fatal(truncErr)
 	}
 
 	f2, err := os.Open(f.Name())
@@ -439,7 +458,7 @@ func TestMapMmapFixedErrorCleanup(t *testing.T) {
 	oldMmap, oldMadvise := mmapFixedFunc, madviseFunc
 	defer restoreFuncs(oldMmap, oldMadvise)
 
-	mmapFixedFunc = func(addr uintptr, length int, f *os.File, writable bool) error {
+	mmapFixedFunc = func(_ uintptr, _ int, _ *os.File, _ bool) error {
 		return syscall.ENOMEM
 	}
 
@@ -459,7 +478,7 @@ func TestMapMmapFixedAddressMismatch(t *testing.T) {
 	oldMmap, oldMadvise := mmapFixedFunc, madviseFunc
 	defer restoreFuncs(oldMmap, oldMadvise)
 
-	mmapFixedFunc = func(addr uintptr, length int, f *os.File, writable bool) error {
+	mmapFixedFunc = func(addr uintptr, _ int, _ *os.File, _ bool) error {
 		return fmt.Errorf("mmapforge: mmap: expected address %#x, got %#x", addr, uintptr(0xBADF00D))
 	}
 
@@ -479,7 +498,7 @@ func TestMapMadviseErrorCleanup(t *testing.T) {
 	oldMmap, oldMadvise := mmapFixedFunc, madviseFunc
 	defer restoreFuncs(oldMmap, oldMadvise)
 
-	madviseFunc = func(addr uintptr, length int, advise int) error {
+	madviseFunc = func(_ uintptr, _ int, _ int) error {
 		return syscall.EINVAL
 	}
 
@@ -499,7 +518,7 @@ func TestMmapFixedAddressMismatchReal(t *testing.T) {
 	old := mmapSyscall
 	defer func() { mmapSyscall = old }()
 
-	mmapSyscall = func(addr, length, prot, flags, fd, offset uintptr) (uintptr, error) {
+	mmapSyscall = func(_, _, _, _, _, _ uintptr) (uintptr, error) {
 		return 0xBADF00D, nil
 	}
 
@@ -509,8 +528,9 @@ func TestMmapFixedAddressMismatchReal(t *testing.T) {
 	}
 	defer f.Close()
 
-	if err := f.Truncate(int64(pageSize)); err != nil {
-		t.Fatal(err)
+	truncErr := f.Truncate(int64(pageSize))
+	if truncErr != nil {
+		t.Fatal(truncErr)
 	}
 
 	reserved, err := syscall.Mmap(-1, 0, pageSize*2,
@@ -518,7 +538,7 @@ func TestMmapFixedAddressMismatchReal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer syscall.Munmap(reserved)
+	defer func() { deferSysMunmap(t, reserved) }()
 
 	addr := uintptr(unsafe.Pointer(&reserved[0]))
 	err = mmapFixed(addr, pageSize, f, false)
