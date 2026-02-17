@@ -1,0 +1,35 @@
+# mmapforge
+AGENTS.md
+
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/mmapforge
+
+# Test binary
+*.test
+
+# Output of go coverage
+*.out
+*.prof
+
+# Dependency directories
+vendor/
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

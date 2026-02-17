@@ -1,0 +1,125 @@
+# ============================================================================
+# golangci-lint configuration
+# Docs: https://golangci-lint.run/usage/configuration/
+# ============================================================================
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+output:
+  formats:
+    - format: colored-line-number
+
+linters:
+  enable:
+    # Default linters
+    - errcheck          # Check for unchecked errors
+    - gosimple          # Simplify code
+    - govet             # Report suspicious constructs
+    - ineffassign       # Detect ineffective assignments
+    - staticcheck       # Comprehensive static analysis
+    - unused            # Find unused code
+
+    # Additional linters
+    - bodyclose         # Check HTTP response body is closed
+    - contextcheck      # Check function uses inherited context
+    - copyloopvar       # Detect loop variable capture issues
+    - durationcheck     # Check for two durations multiplied
+    - errname           # Check sentinel error naming (ErrXxx)
+    - errorlint         # Find issues with error wrapping
+    - exhaustive        # Check switch exhaustiveness
+    - gofmt             # Enforce gofmt formatting
+    - goimports         # Enforce import ordering
+    - gosec             # Security-focused linter
+    - misspell          # Find common misspellings
+    - nilerr            # Find returning nil after checking error
+    - noctx             # Find HTTP requests without context
+    - nolintlint        # Report ill-formed nolint directives
+    - prealloc          # Suggest preallocating slices
+    - predeclared       # Find shadowed predeclared identifiers
+    - revive            # General purpose linter (replaces golint)
+    - rowserrcheck      # Check sql.Rows.Err is checked
+    - sqlclosecheck     # Check sql.Rows and sql.Stmt are closed
+    - unconvert         # Remove unnecessary type conversions
+    - unparam           # Find unused function parameters
+    - wastedassign      # Find wasted assignments
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  errorlint:
+    errorf: true
+    asserts: true
+    comparison: true
+
+  exhaustive:
+    default-signifies-exhaustive: true
+
+  gosec:
+    excludes:
+      - G104  # We use errcheck for this
+
+  govet:
+    enable-all: true
+
+  misspell:
+    locale: US
+
+  nolintlint:
+    require-explanation: true
+    require-specific: true
+
+  revive:
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+        arguments:
+          - allowTypesBefore: "*testing.T"
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 10
+
+  exclude-rules:
+    # Test files can use dot imports for testing helpers
+    - path: _test\.go
+      linters:
+        - revive
+      text: "dot-imports"
+
+    # Test files don't need to check for unchecked errors in cleanup
+    - path: _test\.go
+      linters:
+        - errcheck
+      text: "Error return value of .*(Close|Remove)"
+
+    # Allow unused parameters in test fakes
+    - path: fake_test\.go
+      linters:
+        - unparam
+        - unused
