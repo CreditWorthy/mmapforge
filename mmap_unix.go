@@ -19,6 +19,17 @@ var pageSize = os.Getpagesize()
 // how much virtual address space we reserve upfront when mapping a file
 const DefaultMaxVA = 1 << 3
 
+// functions can be overridden for testing
+var mmapFixedFunc = mmapFixed
+var madviseFunc = madviseAt
+var mmapSyscall = func(addr, length, prot, flags, fd, offset uintptr) (uintptr, error) {
+	r, _, errno := syscall.Syscall6(syscall.SYS_MMAP, addr, length, prot, flags, fd, offset)
+	if errno != 0 {
+		return 0, errno
+	}
+	return r, nil
+}
+
 // rounds n up to the nearest page boundary; if already aligned it stays the same
 // n <= 0 gets clamped to one page <- cant map zero bytes
 //
@@ -120,7 +131,7 @@ func Map(f *os.File, size int, writable bool, access AccessPattern, reserveVA ..
 		}
 	}
 
-	if fixmaperr := mmapFixed(base, size, f, writable); fixmaperr != nil {
+	if fixmaperr := mmapFixedFunc(base, size, f, writable); fixmaperr != nil {
 		munerror := syscall.Munmap(reserved)
 		return nil, errors.Join(
 			fmt.Errorf("mmapforge: mmap: %w", fixmaperr),
@@ -128,7 +139,7 @@ func Map(f *os.File, size int, writable bool, access AccessPattern, reserveVA ..
 		)
 	}
 
-	if madviseerr := madviseAt(base, size, access.sysAdvice()); madviseerr != nil {
+	if madviseerr := madviseFunc(base, size, access.sysAdvice()); madviseerr != nil {
 		munerror := munmapAt(base, reserveSize)
 		return nil, errors.Join(
 			fmt.Errorf("mmapforge: madvise: %w", madviseerr),
@@ -169,8 +180,7 @@ func mmapFixed(addr uintptr, length int, f *os.File, writable bool) error {
 		prot |= syscall.PROT_WRITE
 	}
 
-	r, _, errno := syscall.Syscall6(
-		syscall.SYS_MMAP,
+	r, err := mmapSyscall(
 		addr,
 		uintptr(length),
 		uintptr(prot),
@@ -178,9 +188,8 @@ func mmapFixed(addr uintptr, length int, f *os.File, writable bool) error {
 		f.Fd(),
 		0,
 	)
-
-	if errno != 0 {
-		return errno
+	if err != nil {
+		return err
 	}
 	if r != addr {
 		return fmt.Errorf("mmapforge: mmap: expected address %#x, got %#x", addr, r)
@@ -210,7 +219,7 @@ func munmapAt(addr uintptr, length int) error {
 // we swallow the error instead of failing the whole Map call
 func madviseAt(addr uintptr, length int, advise int) error {
 	_, _, errno := syscall.Syscall(
-		syscall.SYS_MUNMAP,
+		syscall.SYS_MADVISE,
 		addr,
 		uintptr(length),
 		uintptr(advise),
