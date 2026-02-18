@@ -29,6 +29,13 @@ var mmapSyscall = func(addr, length, prot, flags, fd, offset uintptr) (uintptr, 
 	}
 	return r, nil
 }
+var msyncSyscall = func(addr, length, flags uintptr) error {
+	_, _, errno := syscall.Syscall(syscall.SYS_MSYNC, addr, length, flags)
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
 
 // rounds n up to the nearest page boundary; if already aligned it stays the same
 // n <= 0 gets clamped to one page <- cant map zero bytes
@@ -239,4 +246,96 @@ func (a AccessPattern) sysAdvice() int {
 	default:
 		return syscall.MADV_SEQUENTIAL
 	}
+}
+
+// Sync flushes dirty pages to disk via msync. Block until the kernal confirms the write hit stable storage.
+func (r *Region) Sync() error {
+	sz := r.size.Load()
+	if sz == 0 {
+		return fmt.Errorf("mmapforge: sync: %w", ErrClosed)
+	}
+
+	err := msyncSyscall(r.base, uintptr(sz), uintptr(syscall.MS_SYNC))
+	if err != nil {
+		return fmt.Errorf("mmapforge: sync: %w", err)
+	}
+
+	return nil
+}
+
+// Unmap releases the entire VA reservation. Idempotent.
+func (r *Region) Unmap() error {
+	if r.size.Load() == 0 && r.maxVA == 0 {
+		return nil
+	}
+	err := munmapAt(r.base, r.maxVA)
+	r.size.Store(0)
+	r.maxVA = 0
+	if err != nil {
+		return fmt.Errorf("mmapforge: unmap: %w", err)
+	}
+	return nil
+}
+
+// Close unmaps the region and closes the file descriptor.
+func (r *Region) Close() error {
+	unmapErr := r.Unmap()
+	closeErr := r.file.Close()
+	if unmapErr != nil {
+		return fmt.Errorf("mmapforge: close: %w", unmapErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("mmapforge: close: %w", closeErr)
+	}
+	return nil
+}
+
+// Grow remaps the file to at least minSize bytes (page-aligned) at the
+// same base address using MAP_FIXED. No-op if already large enough.
+//
+// Because the base address never changes, slices from previous Slice
+// calls remain valid (they point into the same VA range). New pages
+// beyond the old size become accessible after Grow returns.
+//
+// Must be externally serialized (Store.appendMu).
+func (r *Region) Grow(minSize int) error {
+	cur := int(r.size.Load())
+	if minSize <= cur {
+		return nil
+	}
+
+	aligned := pageAlign(minSize)
+	if aligned > r.maxVA {
+		return fmt.Errorf("mmapforge: grow %d exceeds max VA reservation %d", aligned, r.maxVA)
+	}
+
+	if err := r.file.Truncate(int64(aligned)); err != nil {
+		return fmt.Errorf("mmapforge: grow truncate: %w", err)
+	}
+
+	if err := mmapFixedFunc(r.base, aligned, r.file, r.writeable); err != nil {
+		return fmt.Errorf("mmapforge: grow mmap: %w", err)
+	}
+
+	if err := madviseFunc(r.base, aligned, r.access.sysAdvice()); err != nil {
+		return fmt.Errorf("mmapforge: grow madvise: %w", err)
+	}
+
+	r.size.Store(int64(aligned))
+	return nil
+}
+
+// Mapped returns the size of the mapped region in bytes.
+func (r *Region) Mapped() int {
+	return int(r.size.Load())
+}
+
+// Slice returns the mmap byte range [off, off+n) from the stable base.
+// Out-of-range panics on purpose so layout bugs surface fast.
+// Valid for the lifetime of the Region (base address never changes).
+func (r *Region) Slice(offset, n int) []byte {
+	// unsafe.Slice: creates a Go slice header over the stable mmap VA range.
+	// Safe because the base address is fixed for the Region's lifetime, and
+	// the caller is responsible for not accessing beyond the mapped size.
+	return unsafe.Slice((*byte)(unsafe.Pointer(r.base+uintptr(offset))), n)
 }

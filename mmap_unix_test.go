@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"testing"
 	"unsafe"
@@ -544,5 +545,704 @@ func TestMmapFixedAddressMismatchReal(t *testing.T) {
 	err = mmapFixed(addr, pageSize, f, false)
 	if err == nil {
 		t.Fatal("expected error for address mismatch")
+	}
+}
+
+func TestSliceReadWrite(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	size := pageSize
+	r, err := Map(f, size, true, Sequential, pageSize*4)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	s := r.Slice(0, 8)
+	binary.LittleEndian.PutUint64(s, 0xCAFEBABE)
+
+	s2 := r.Slice(0, 8)
+	got := binary.LittleEndian.Uint64(s2)
+	if got != 0xCAFEBABE {
+		t.Fatalf("Slice read back %#x, want 0xCAFEBABE", got)
+	}
+}
+
+func TestSliceAtOffset(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	size := pageSize
+	r, maperr := Map(f, size, true, Sequential, pageSize*4)
+	if maperr != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	offset := 128
+	s := r.Slice(offset, 8)
+	binary.LittleEndian.PutUint64(s, 0x1234567890ABCDEF)
+
+	raw := unsafe.Slice((*byte)(unsafe.Pointer(r.base+uintptr(offset))), 8)
+	got := binary.LittleEndian.Uint64(raw)
+	if got != 0x1234567890ABCDEF {
+		t.Fatalf("got %#x at offset %d, want 0x1234567890ABCDEF", got, offset)
+	}
+}
+
+func TestSliceZeroLength(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	r, err := Map(f, pageSize, true, Sequential, pageSize*4)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	s := r.Slice(0, 0)
+	if len(s) != 0 {
+		t.Fatalf("Slice(0,0) len = %d, want 0", len(s))
+	}
+}
+
+func TestMapped(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	size := pageSize * 2
+	r, err := Map(f, size, false, Sequential, pageSize*8)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	if r.Mapped() != size {
+		t.Errorf("Mapped() = %d, want %d", r.Mapped(), size)
+	}
+}
+
+func TestMappedAfterUnmap(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	r, err := Map(f, pageSize, false, Sequential, pageSize*4)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+
+	unmaperr := r.Unmap()
+	if unmaperr != nil {
+		t.Errorf("Unmap failed: %v", unmaperr)
+	}
+
+	if r.Mapped() != 0 {
+		t.Errorf("Mapped() after Unmap = %d, want 0", r.Mapped())
+	}
+}
+
+func TestSyncFlushesToDisk(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	r, err := Map(f, pageSize, true, Sequential, pageSize*4)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	s := r.Slice(0, 8)
+	binary.LittleEndian.PutUint64(s, 0xFEEDFACE)
+
+	if err := r.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	buf := make([]byte, 8)
+	if _, err := f.ReadAt(buf, 0); err != nil {
+		t.Fatal(err)
+	}
+	got := binary.LittleEndian.Uint64(buf)
+	if got != 0xFEEDFACE {
+		t.Fatalf("file read back %#x after Sync, want 0xFEEDFACE", got)
+	}
+}
+
+func TestSyncAfterUnmapReturnsError(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	r, err := Map(f, pageSize, true, Sequential, pageSize*4)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+
+	unmaperr := r.Unmap()
+	if unmaperr != nil {
+		t.Errorf("Unmap failed: %v", unmaperr)
+	}
+
+	if err := r.Sync(); err == nil {
+		t.Fatal("expected error from Sync after Unmap")
+	}
+}
+
+func TestSyncMsyncError(t *testing.T) {
+	old := msyncSyscall
+	defer func() { msyncSyscall = old }()
+
+	msyncSyscall = func(_, _, _ uintptr) error {
+		return syscall.EIO
+	}
+
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	r, err := Map(f, pageSize, true, Sequential, pageSize*4)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	if err := r.Sync(); err == nil {
+		t.Fatal("expected error when msync fails")
+	}
+}
+
+func TestUnmapIdempotent(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	r, err := Map(f, pageSize, true, Sequential, pageSize*4)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+
+	if err := r.Unmap(); err != nil {
+		t.Fatalf("first Unmap: %v", err)
+	}
+
+	if err := r.Unmap(); err != nil {
+		t.Fatalf("second Unmap (idempotent): %v", err)
+	}
+}
+
+func TestUnmapClearsSizeAndMaxVA(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	r, err := Map(f, pageSize, false, Sequential, pageSize*4)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+
+	unmaperr := r.Unmap()
+	if unmaperr != nil {
+		t.Errorf("Unmap failed: %v", unmaperr)
+	}
+
+	if r.size.Load() != 0 {
+		t.Errorf("size after Unmap = %d, want 0", r.size.Load())
+	}
+	if r.maxVA != 0 {
+		t.Errorf("maxVA after Unmap = %d, want 0", r.maxVA)
+	}
+}
+
+func TestCloseUnmapsAndClosesFile(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := Map(f, pageSize, true, Sequential, pageSize*4)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if r.Mapped() != 0 {
+		t.Errorf("Mapped() after Close = %d, want 0", r.Mapped())
+	}
+
+	_, writeErr := f.Write([]byte("x"))
+	if writeErr == nil {
+		t.Error("expected error writing to closed file")
+	}
+}
+
+func TestCloseIdempotentUnmap(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := Map(f, pageSize, true, Sequential, pageSize*4)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+
+	unmaperr := r.Unmap()
+	if unmaperr != nil {
+		t.Errorf("Unmap failed: %v", unmaperr)
+	}
+
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close after Unmap: %v", err)
+	}
+}
+
+func TestGrowExpandsRegion(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	reserveSize := pageSize * 8
+	r, err := Map(f, pageSize, true, Sequential, reserveSize)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	s := r.Slice(0, 8)
+	binary.LittleEndian.PutUint64(s, 0xAAAA)
+
+	newSize := pageSize * 3
+	if err := r.Grow(newSize); err != nil {
+		t.Fatalf("Grow: %v", err)
+	}
+
+	if r.Mapped() < newSize {
+		t.Errorf("Mapped() = %d after Grow, want >= %d", r.Mapped(), newSize)
+	}
+
+	s2 := r.Slice(0, 8)
+	got := binary.LittleEndian.Uint64(s2)
+	if got != 0xAAAA {
+		t.Fatalf("data after Grow = %#x, want 0xAAAA", got)
+	}
+
+	s3 := r.Slice(pageSize*2, 8)
+	binary.LittleEndian.PutUint64(s3, 0xBBBB)
+	got2 := binary.LittleEndian.Uint64(r.Slice(pageSize*2, 8))
+	if got2 != 0xBBBB {
+		t.Fatalf("new region data = %#x, want 0xBBBB", got2)
+	}
+}
+
+func TestGrowNoOpWhenAlreadyLargeEnough(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	size := pageSize * 4
+	r, err := Map(f, size, true, Sequential, pageSize*8)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	before := r.Mapped()
+	if err := r.Grow(pageSize); err != nil {
+		t.Fatalf("Grow (no-op): %v", err)
+	}
+	if r.Mapped() != before {
+		t.Errorf("Mapped changed from %d to %d on no-op Grow", before, r.Mapped())
+	}
+}
+
+func TestGrowExceedsMaxVA(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	reserveSize := pageSize * 2
+	r, err := Map(f, pageSize, true, Sequential, reserveSize)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	err = r.Grow(reserveSize + pageSize)
+	if err == nil {
+		t.Fatal("expected error when Grow exceeds maxVA")
+	}
+}
+
+func TestGrowTruncateError(t *testing.T) {
+	dir := t.TempDir()
+	f, err := os.CreateTemp(dir, "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := f.Name()
+	f.Close()
+
+	f2, err := os.Open(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f2.Close()
+
+	reserveSize := pageSize * 4
+	reserved, err := syscall.Mmap(-1, 0, reserveSize, syscall.PROT_NONE, syscall.MAP_PRIVATE|syscall.MAP_ANON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := uintptr(unsafe.Pointer(&reserved[0]))
+
+	r := &Region{
+		file:      f2,
+		base:      base,
+		maxVA:     reserveSize,
+		writeable: true,
+	}
+	r.size.Store(int64(pageSize))
+	defer func() {
+		munerr := munmapAt(base, reserveSize)
+		if munerr != nil {
+			t.Errorf("munmapAt failed: %v", munerr)
+		}
+	}()
+
+	err = r.Grow(pageSize * 2)
+	if err == nil {
+		t.Fatal("expected error when Truncate fails in Grow")
+	}
+}
+
+func TestGrowMmapError(t *testing.T) {
+	oldMmap, oldMadvise := mmapFixedFunc, madviseFunc
+	defer restoreFuncs(oldMmap, oldMadvise)
+
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	r, err := Map(f, pageSize, true, Sequential, pageSize*4)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		mmapFixedFunc = oldMmap
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	mmapFixedFunc = func(_ uintptr, _ int, _ *os.File, _ bool) error {
+		return fmt.Errorf("injected mmap error")
+	}
+
+	err = r.Grow(pageSize * 2)
+	if err == nil {
+		t.Fatal("expected error when mmapFixed fails in Grow")
+	}
+}
+
+func TestGrowMadviseError(t *testing.T) {
+	oldMmap, oldMadvise := mmapFixedFunc, madviseFunc
+	defer restoreFuncs(oldMmap, oldMadvise)
+
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	r, err := Map(f, pageSize, true, Sequential, pageSize*4)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		madviseFunc = oldMadvise
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	madviseFunc = func(_ uintptr, _ int, _ int) error {
+		return syscall.EINVAL
+	}
+
+	err = r.Grow(pageSize * 2)
+	if err == nil {
+		t.Fatal("expected error when madvise fails in Grow")
+	}
+}
+
+func TestGrowPageAligns(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	r, err := Map(f, pageSize, true, Sequential, pageSize*8)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	if err := r.Grow(pageSize + 1); err != nil {
+		t.Fatalf("Grow: %v", err)
+	}
+
+	mapped := r.Mapped()
+	if mapped%pageSize != 0 {
+		t.Errorf("Mapped() = %d after Grow, not page-aligned", mapped)
+	}
+	if mapped < pageSize+1 {
+		t.Errorf("Mapped() = %d, want >= %d", mapped, pageSize+1)
+	}
+}
+
+func TestGrowPreservesSliceValidity(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	r, err := Map(f, pageSize, true, Sequential, pageSize*8)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	pre := r.Slice(0, 8)
+	binary.LittleEndian.PutUint64(pre, 0xDEADC0DE)
+
+	if err := r.Grow(pageSize * 4); err != nil {
+		t.Fatalf("Grow: %v", err)
+	}
+
+	got := binary.LittleEndian.Uint64(pre)
+	if got != 0xDEADC0DE {
+		t.Fatalf("pre-grow slice data = %#x after Grow, want 0xDEADC0DE", got)
+	}
+}
+
+func TestGrowFileExtended(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	r, err := Map(f, pageSize, true, Sequential, pageSize*8)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+	defer func() {
+		unmaperr := r.Unmap()
+		if unmaperr != nil {
+			t.Errorf("Unmap failed: %v", unmaperr)
+		}
+	}()
+
+	newSize := pageSize * 3
+	if growerr := r.Grow(newSize); err != nil {
+		t.Fatalf("Grow: %v", growerr)
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() < int64(newSize) {
+		t.Errorf("file size = %d after Grow, want >= %d", info.Size(), newSize)
+	}
+}
+
+func TestUnmapReturnsError(t *testing.T) {
+	r := &Region{
+		base:  1,
+		maxVA: pageSize,
+	}
+	r.size.Store(int64(pageSize))
+
+	err := r.Unmap()
+	if err == nil {
+		t.Fatal("expected error from Unmap with invalid base address")
+	}
+	if r.size.Load() != 0 {
+		t.Errorf("size after failed Unmap = %d, want 0", r.size.Load())
+	}
+	if r.maxVA != 0 {
+		t.Errorf("maxVA after failed Unmap = %d, want 0", r.maxVA)
+	}
+}
+
+func TestCloseReturnsUnmapError(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Region{
+		file:  f,
+		base:  1,
+		maxVA: pageSize,
+	}
+	r.size.Store(int64(pageSize))
+
+	err = r.Close()
+	if err == nil {
+		t.Fatal("expected error from Close when Unmap fails")
+	}
+	if got := err.Error(); !strings.Contains(got, "unmap") {
+		t.Errorf("Close error = %q, want it to mention 'unmap'", got)
+	}
+}
+
+func TestCloseReturnsFileCloseError(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := Map(f, pageSize, true, Sequential, pageSize*4)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+
+	syscall.Close(int(f.Fd()))
+
+	err = r.Close()
+	if err == nil {
+		t.Fatal("expected error from Close when file.Close fails")
+	}
+	if got := err.Error(); !strings.Contains(got, "close") {
+		t.Errorf("Close error = %q, want it to mention 'close'", got)
+	}
+}
+
+func TestMsyncSyscallSuccess(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	if truncateErr := f.Truncate(int64(pageSize)); truncateErr != nil {
+		t.Fatal(truncateErr)
+	}
+
+	buf, err := syscall.Mmap(int(f.Fd()), 0, pageSize, syscall.PROT_READ, syscall.MAP_SHARED)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { deferSysMunmap(t, buf) }()
+
+	addr := uintptr(unsafe.Pointer(&buf[0]))
+	if err := msyncSyscall(addr, uintptr(pageSize), uintptr(syscall.MS_SYNC)); err != nil {
+		t.Errorf("msyncSyscall on valid mapping: %v", err)
+	}
+}
+
+func TestMsyncSyscallError(t *testing.T) {
+	err := msyncSyscall(0xDEAD0000, uintptr(pageSize), uintptr(syscall.MS_SYNC))
+	if err == nil {
+		t.Fatal("expected error from msyncSyscall on unmapped address")
 	}
 }
