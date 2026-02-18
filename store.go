@@ -45,7 +45,7 @@ func CreateStore(path string, layout *RecordLayout, schemaVersion uint32) (*Stor
 	}
 
 	fileSize := HeaderSize + int(layout.RecordSize)*initialCapacity
-	region, err := Map(f, fileSize, true, Random)
+	region, err := Map(f, fileSize, true, Random, DefaultMaxVA)
 	if err != nil {
 		closeErr := f.Close()
 		return nil, errors.Join(
@@ -100,7 +100,7 @@ func OpenStore(path string, layout *RecordLayout) (*Store, error) {
 		)
 	}
 
-	region, err := Map(f, fileSize, true, Random)
+	region, err := Map(f, fileSize, true, Random, DefaultMaxVA)
 	if err != nil {
 		closeErr := f.Close()
 		return nil, errors.Join(
