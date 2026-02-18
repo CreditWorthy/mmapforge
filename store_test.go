@@ -1,0 +1,853 @@
+package mmapforge
+
+import (
+	"encoding/binary"
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"sync"
+	"syscall"
+	"testing"
+)
+
+func testLayout() *RecordLayout {
+	layout, err := ComputeLayout([]FieldDef{
+		{Name: "id", Type: FieldUint64},
+		{Name: "value", Type: FieldFloat64},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return layout
+}
+
+func tempPath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "test.mmf")
+}
+
+func mustCreateStore(t *testing.T) *Store {
+	t.Helper()
+	path := tempPath(t)
+	s, err := CreateStore(path, testLayout(), 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	return s
+}
+
+type savedFuncs struct {
+	mf func(uintptr, int, *os.File, bool) error
+	ma func(uintptr, int, int) error
+	ms func(uintptr, uintptr, uintptr) error
+	sf func(*os.File) (os.FileInfo, error)
+	ef func([]byte, *Header) error
+}
+
+func saveFuncs() savedFuncs {
+	return savedFuncs{
+		mf: mmapFixedFunc,
+		ma: madviseFunc,
+		ms: msyncSyscall,
+		sf: statFileFunc,
+		ef: encodeHeaderFunc,
+	}
+}
+
+func restoreAllFuncs(s savedFuncs) {
+	mmapFixedFunc = s.mf
+	madviseFunc = s.ma
+	msyncSyscall = s.ms
+	statFileFunc = s.sf
+	encodeHeaderFunc = s.ef
+}
+
+func TestCreateStore(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	if s.Len() != 0 {
+		t.Errorf("Len = %d, want 0", s.Len())
+	}
+	if s.Cap() != initialCapacity {
+		t.Errorf("Cap = %d, want %d", s.Cap(), initialCapacity)
+	}
+}
+
+func TestCreateStore_AlreadyExists(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	s.Close()
+
+	_, err = CreateStore(path, layout, 1)
+	if err == nil {
+		t.Fatal("expected error creating over existing file")
+	}
+}
+
+func TestCreateStore_BadPath(t *testing.T) {
+	_, err := CreateStore("/no/such/dir/test.mmf", testLayout(), 1)
+	if err == nil {
+		t.Fatal("expected error for bad path")
+	}
+}
+
+func TestCreateStore_MapFails(t *testing.T) {
+	saved := saveFuncs()
+	defer restoreAllFuncs(saved)
+
+	mmapFixedFunc = func(_ uintptr, _ int, _ *os.File, _ bool) error {
+		return syscall.ENOMEM
+	}
+
+	_, err := CreateStore(tempPath(t), testLayout(), 1)
+	if err == nil {
+		t.Fatal("expected error when Map fails inside CreateStore")
+	}
+}
+
+func TestCreateStore_EncodeHeaderFails(t *testing.T) {
+	saved := saveFuncs()
+	defer restoreAllFuncs(saved)
+
+	encodeHeaderFunc = func(_ []byte, _ *Header) error {
+		return fmt.Errorf("injected encode error")
+	}
+
+	_, err := CreateStore(tempPath(t), testLayout(), 1)
+	if err == nil {
+		t.Fatal("expected error when EncodeHeader fails inside CreateStore")
+	}
+}
+
+func TestOpenStore(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	s.Close()
+
+	s2, err := OpenStore(path, layout)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer s2.Close()
+
+	if s2.Len() != 0 {
+		t.Errorf("Len = %d, want 0", s2.Len())
+	}
+	if s2.Cap() != initialCapacity {
+		t.Errorf("Cap = %d, want %d", s2.Cap(), initialCapacity)
+	}
+}
+
+func TestOpenStore_PersistsRecordCount(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, appendErr := s.Append(); appendErr != nil {
+			t.Fatalf("Append: %v", appendErr)
+		}
+	}
+	s.Close()
+
+	s2, err := OpenStore(path, layout)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer s2.Close()
+
+	if s2.Len() != 5 {
+		t.Errorf("Len = %d, want 5", s2.Len())
+	}
+}
+
+func TestOpenStore_NonExistent(t *testing.T) {
+	_, err := OpenStore(filepath.Join(t.TempDir(), "nope.mmf"), testLayout())
+	if err == nil {
+		t.Fatal("expected error opening non-existent file")
+	}
+}
+
+func TestOpenStore_FileTooSmall(t *testing.T) {
+	path := tempPath(t)
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, writeErr := f.Write([]byte("short")); writeErr != nil {
+		t.Fatalf("Write: %v", writeErr)
+	}
+	f.Close()
+
+	_, err = OpenStore(path, testLayout())
+	if err == nil {
+		t.Fatal("expected error for file too small")
+	}
+}
+
+func TestOpenStore_EmptyFile(t *testing.T) {
+	path := tempPath(t)
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	f.Close()
+
+	_, err = OpenStore(path, testLayout())
+	if err == nil {
+		t.Fatal("expected error for empty file")
+	}
+}
+
+func TestOpenStore_BadMagic(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	s.Close()
+
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	if _, writeErr := f.WriteAt([]byte("BAAD"), 0); writeErr != nil {
+		t.Fatalf("WriteAt: %v", writeErr)
+	}
+	f.Close()
+
+	_, err = OpenStore(path, layout)
+	if err == nil {
+		t.Fatal("expected error for bad magic")
+	}
+}
+
+func TestOpenStore_BadFormatVersion(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	s.Close()
+
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	var buf [4]byte
+	binary.LittleEndian.PutUint32(buf[:], 999)
+	if _, writeErr := f.WriteAt(buf[:], 4); writeErr != nil {
+		t.Fatalf("WriteAt: %v", writeErr)
+	}
+	f.Close()
+
+	_, err = OpenStore(path, layout)
+	if err == nil {
+		t.Fatal("expected error for bad format version")
+	}
+}
+
+func TestOpenStore_SchemaMismatch(t *testing.T) {
+	path := tempPath(t)
+
+	s, err := CreateStore(path, testLayout(), 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	s.Close()
+
+	other, err := ComputeLayout([]FieldDef{
+		{Name: "x", Type: FieldUint32},
+	})
+	if err != nil {
+		t.Fatalf("ComputeLayout: %v", err)
+	}
+	_, err = OpenStore(path, other)
+	if err == nil {
+		t.Fatal("expected schema mismatch error")
+	}
+}
+
+func TestOpenStore_MapFails(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	s.Close()
+
+	saved := saveFuncs()
+	defer restoreAllFuncs(saved)
+
+	mmapFixedFunc = func(_ uintptr, _ int, _ *os.File, _ bool) error {
+		return syscall.ENOMEM
+	}
+
+	_, err = OpenStore(path, layout)
+	if err == nil {
+		t.Fatal("expected error when Map fails inside OpenStore")
+	}
+}
+
+func TestOpenStore_StatFails(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	s.Close()
+
+	saved := saveFuncs()
+	defer restoreAllFuncs(saved)
+
+	statFileFunc = func(_ *os.File) (os.FileInfo, error) {
+		return nil, fmt.Errorf("injected stat error")
+	}
+
+	_, err = OpenStore(path, layout)
+	if err == nil {
+		t.Fatal("expected error when Stat fails inside OpenStore")
+	}
+}
+
+func TestClose_Double(t *testing.T) {
+	s := mustCreateStore(t)
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := s.Close(); err == nil {
+		t.Fatal("expected error on double close")
+	}
+}
+
+func TestClose_FlushesHeader(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		if _, appendErr := s.Append(); appendErr != nil {
+			t.Fatalf("Append: %v", appendErr)
+		}
+	}
+	s.Close()
+
+	s2, err := OpenStore(path, layout)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer s2.Close()
+
+	if s2.Len() != 5 {
+		t.Errorf("Len after reopen = %d, want 5", s2.Len())
+	}
+}
+
+func TestClose_SyncFails(t *testing.T) {
+	saved := saveFuncs()
+
+	s := mustCreateStore(t)
+
+	msyncSyscall = func(_, _, _ uintptr) error {
+		return syscall.EIO
+	}
+
+	err := s.Close()
+	restoreAllFuncs(saved)
+
+	if err == nil {
+		t.Fatal("expected error when region.Sync fails during Close")
+	}
+}
+
+func TestClose_FlushHeaderFails(t *testing.T) {
+	saved := saveFuncs()
+
+	s := mustCreateStore(t)
+
+	encodeHeaderFunc = func(_ []byte, _ *Header) error {
+		return fmt.Errorf("injected encode error")
+	}
+
+	err := s.Close()
+	restoreAllFuncs(saved)
+
+	if err == nil {
+		t.Fatal("expected error when flushHeader fails during Close")
+	}
+}
+
+func TestSync(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	if _, err := s.Append(); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := s.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+}
+
+func TestSync_Closed(t *testing.T) {
+	s := mustCreateStore(t)
+	s.Close()
+
+	if err := s.Sync(); err == nil {
+		t.Fatal("expected error syncing closed store")
+	}
+}
+
+func TestSync_PersistsWithoutClose(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, appendErr := s.Append(); appendErr != nil {
+			t.Fatalf("Append: %v", appendErr)
+		}
+	}
+	if syncErr := s.Sync(); syncErr != nil {
+		t.Fatalf("Sync: %v", syncErr)
+	}
+	s.Close()
+
+	s2, err := OpenStore(path, layout)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer s2.Close()
+
+	if s2.Len() != 3 {
+		t.Errorf("Len = %d, want 3", s2.Len())
+	}
+}
+
+func TestSync_RegionSyncFails(t *testing.T) {
+	saved := saveFuncs()
+	defer restoreAllFuncs(saved)
+
+	s := mustCreateStore(t)
+	defer func() {
+		msyncSyscall = saved.ms
+		s.Close()
+	}()
+
+	msyncSyscall = func(_, _, _ uintptr) error {
+		return syscall.EIO
+	}
+
+	if err := s.Sync(); err == nil {
+		t.Fatal("expected error when region.Sync fails during Sync")
+	}
+}
+
+func TestSync_FlushHeaderFails(t *testing.T) {
+	saved := saveFuncs()
+	defer restoreAllFuncs(saved)
+
+	s := mustCreateStore(t)
+	defer func() {
+		encodeHeaderFunc = saved.ef
+		s.Close()
+	}()
+
+	encodeHeaderFunc = func(_ []byte, _ *Header) error {
+		return fmt.Errorf("injected encode error")
+	}
+
+	if err := s.Sync(); err == nil {
+		t.Fatal("expected error when flushHeader fails during Sync")
+	}
+}
+
+func TestAppend_Sequential(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	for i := 0; i < 10; i++ {
+		idx, err := s.Append()
+		if err != nil {
+			t.Fatalf("Append %d: %v", i, err)
+		}
+		if idx != i {
+			t.Errorf("Append returned %d, want %d", idx, i)
+		}
+	}
+	if s.Len() != 10 {
+		t.Errorf("Len = %d, want 10", s.Len())
+	}
+}
+
+func TestAppend_Closed(t *testing.T) {
+	s := mustCreateStore(t)
+	s.Close()
+
+	_, err := s.Append()
+	if err == nil {
+		t.Fatal("expected error appending to closed store")
+	}
+}
+
+func TestAppend_ReadOnly(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	s.writable = false
+	_, err := s.Append()
+	if err == nil {
+		t.Fatal("expected error appending to read-only store")
+	}
+	s.writable = true
+}
+
+func TestAppend_TriggersGrow(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	target := initialCapacity + 10
+	for i := 0; i < target; i++ {
+		idx, err := s.Append()
+		if err != nil {
+			t.Fatalf("Append %d: %v", i, err)
+		}
+		if idx != i {
+			t.Errorf("Append returned %d, want %d", idx, i)
+		}
+	}
+
+	if s.Len() != target {
+		t.Errorf("Len = %d, want %d", s.Len(), target)
+	}
+	if s.Cap() <= initialCapacity {
+		t.Errorf("Cap = %d, expected > %d after grow", s.Cap(), initialCapacity)
+	}
+}
+
+func TestAppend_GrowDoublesCap(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	for i := 0; i < initialCapacity+2; i++ {
+		if _, err := s.Append(); err != nil {
+			t.Fatalf("Append %d: %v", i, err)
+		}
+	}
+	if s.Cap() != initialCapacity*2 {
+		t.Errorf("Cap = %d, want %d", s.Cap(), initialCapacity*2)
+	}
+}
+
+func TestAppend_MultipleGrows(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	target := initialCapacity*2 + 10
+	for i := 0; i < target; i++ {
+		if _, err := s.Append(); err != nil {
+			t.Fatalf("Append %d: %v", i, err)
+		}
+	}
+
+	if s.Len() != target {
+		t.Errorf("Len = %d, want %d", s.Len(), target)
+	}
+	if s.Cap() < target {
+		t.Errorf("Cap = %d, want >= %d", s.Cap(), target)
+	}
+}
+
+func TestAppend_GrowFails(t *testing.T) {
+	saved := saveFuncs()
+	defer restoreAllFuncs(saved)
+
+	s := mustCreateStore(t)
+	defer func() {
+		mmapFixedFunc = saved.mf
+		s.Close()
+	}()
+
+	for i := 0; i < initialCapacity+1; i++ {
+		if _, err := s.Append(); err != nil {
+			t.Fatalf("Append %d: %v", i, err)
+		}
+	}
+
+	mmapFixedFunc = func(_ uintptr, _ int, _ *os.File, _ bool) error {
+		return syscall.ENOMEM
+	}
+
+	_, err := s.Append()
+	if err == nil {
+		t.Fatal("expected error when grow fails inside Append")
+	}
+}
+
+func TestAppend_GrowPersists(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+
+	target := initialCapacity + 20
+	for i := 0; i < target; i++ {
+		if _, appendErr := s.Append(); appendErr != nil {
+			t.Fatalf("Append %d: %v", i, appendErr)
+		}
+	}
+	s.Close()
+
+	s2, err := OpenStore(path, layout)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer s2.Close()
+
+	if s2.Len() != target {
+		t.Errorf("Len = %d, want %d", s2.Len(), target)
+	}
+}
+
+func TestGrow_ZeroCapacity(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	s.capacityPtr.Store(0)
+	if err := s.grow(); err != nil {
+		t.Fatalf("grow: %v", err)
+	}
+	if s.Cap() != initialCapacity {
+		t.Errorf("Cap = %d, want %d after grow from zero", s.Cap(), initialCapacity)
+	}
+}
+
+func TestGrow_RegionGrowFails(t *testing.T) {
+	saved := saveFuncs()
+	defer restoreAllFuncs(saved)
+
+	s := mustCreateStore(t)
+	defer func() {
+		mmapFixedFunc = saved.mf
+		s.Close()
+	}()
+
+	mmapFixedFunc = func(_ uintptr, _ int, _ *os.File, _ bool) error {
+		return syscall.ENOMEM
+	}
+
+	err := s.grow()
+	if err == nil {
+		t.Fatal("expected error when region.Grow fails")
+	}
+}
+
+func TestGrow_CapacityUpdatedAfterSuccess(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	before := s.Cap()
+	if err := s.grow(); err != nil {
+		t.Fatalf("grow: %v", err)
+	}
+	after := s.Cap()
+
+	if after != before*2 {
+		t.Errorf("Cap after grow = %d, want %d", after, before*2)
+	}
+}
+
+func TestGrow_NegativeRecordSize(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	s.recordSize = -1
+	err := s.grow()
+	if err == nil {
+		t.Fatal("expected error for negative record size")
+	}
+}
+
+func TestGrow_OverflowsAddressSpace(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	s.capacityPtr.Store(200_000_000_000_000_000)
+	err := s.grow()
+	if err == nil {
+		t.Fatal("expected error when newSize overflows address space")
+	}
+}
+
+func TestAppend_IndexOverflowsInt(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	s.recordCountPtr.Store(uint64(math.MaxInt) + 1)
+	s.capacityPtr.Store(uint64(math.MaxInt) + 2)
+
+	_, err := s.Append()
+	if err == nil {
+		t.Fatal("expected error when record index overflows int")
+	}
+}
+
+func TestLen_PanicsOnOverflow(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	s.recordCountPtr.Store(uint64(math.MaxInt) + 1)
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic from Len overflow")
+		}
+	}()
+	s.Len()
+}
+
+func TestCap_PanicsOnOverflow(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	s.capacityPtr.Store(uint64(math.MaxInt) + 1)
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic from Cap overflow")
+		}
+	}()
+	s.Cap()
+}
+
+func TestAppend_Concurrent(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	goroutines := 8
+	perGoroutine := 50
+	total := goroutines * perGoroutine
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	errs := make(chan error, total)
+
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perGoroutine; i++ {
+				_, err := s.Append()
+				if err != nil {
+					errs <- err
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Errorf("Append error: %v", err)
+	}
+	if s.Len() != total {
+		t.Errorf("Len = %d, want %d", s.Len(), total)
+	}
+}
+
+func TestAppend_ConcurrentIndicesUnique(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	goroutines := 4
+	perGoroutine := 100
+	total := goroutines * perGoroutine
+
+	results := make(chan int, total)
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perGoroutine; i++ {
+				idx, err := s.Append()
+				if err != nil {
+					t.Errorf("Append: %v", err)
+					return
+				}
+				results <- idx
+			}
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	seen := make(map[int]bool, total)
+	for idx := range results {
+		if seen[idx] {
+			t.Errorf("duplicate index %d", idx)
+		}
+		seen[idx] = true
+	}
+	if len(seen) != total {
+		t.Errorf("unique indices = %d, want %d", len(seen), total)
+	}
+}
+
+func TestLen_And_Cap(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	if s.Len() != 0 {
+		t.Errorf("initial Len = %d, want 0", s.Len())
+	}
+	if s.Cap() != initialCapacity {
+		t.Errorf("initial Cap = %d, want %d", s.Cap(), initialCapacity)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, appendErr := s.Append(); appendErr != nil {
+			t.Fatalf("Append %d: %v", i, appendErr)
+		}
+	}
+
+	if s.Len() != 3 {
+		t.Errorf("Len = %d, want 3", s.Len())
+	}
+	if s.Cap() != initialCapacity {
+		t.Errorf("Cap = %d, want %d (should not grow)", s.Cap(), initialCapacity)
+	}
+}
