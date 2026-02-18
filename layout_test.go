@@ -203,23 +203,23 @@ func TestComputeLayout_UnknownFieldType(t *testing.T) {
 
 func TestFieldType_String(t *testing.T) {
 	cases := []struct {
-		ft   FieldType
 		want string
+		ft   FieldType
 	}{
-		{FieldBool, "bool"},
-		{FieldInt8, "int8"},
-		{FieldUint8, "uint8"},
-		{FieldInt16, "int16"},
-		{FieldUint16, "uint16"},
-		{FieldInt32, "int32"},
-		{FieldUint32, "uint32"},
-		{FieldInt64, "int64"},
-		{FieldUint64, "uint64"},
-		{FieldFloat32, "float32"},
-		{FieldFloat64, "float64"},
-		{FieldString, "string"},
-		{FieldBytes, "bytes"},
-		{FieldType(99), "unknown"},
+		{"bool", FieldBool},
+		{"int8", FieldInt8},
+		{"uint8", FieldUint8},
+		{"int16", FieldInt16},
+		{"uint16", FieldUint16},
+		{"int32", FieldInt32},
+		{"uint32", FieldUint32},
+		{"int64", FieldInt64},
+		{"uint64", FieldUint64},
+		{"float32", FieldFloat32},
+		{"float64", FieldFloat64},
+		{"string", FieldString},
+		{"bytes", FieldBytes},
+		{"unknown", FieldType(99)},
 	}
 	for _, tc := range cases {
 		if got := tc.ft.String(); got != tc.want {
