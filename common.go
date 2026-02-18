@@ -7,3 +7,5 @@ const MagicString = "MMFG"
 const Version uint32 = 1
 
 const HeaderSize = 64
+
+const StoreReserveVA = 1 << 30
