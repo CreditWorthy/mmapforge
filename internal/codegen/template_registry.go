@@ -5,9 +5,9 @@ import "strings"
 type (
 	// TypeTemplate is executed once per Type node.
 	TypeTemplate struct {
-		Name   string             // matches a {{ define "name" }} in a .tmpl file
-		Cond   func(*Type) bool   // optional: skip if returns false
-		Format func(*Type) string // output file name
+		Cond   func(*Type) bool
+		Format func(*Type) string
+		Name   string
 	}
 
 	// GraphTemplate is executed once for the whole Graph.

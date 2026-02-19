@@ -9,14 +9,14 @@ import (
 )
 
 //go:embed template/*
-var templateDir embed.FS
+var _ embed.FS
 
 var defaultFuncMap = template.FuncMap{
 	"lower": strings.ToLower,
 	"upper": strings.ToUpper,
 }
 
-var templates *Template
+//var templates *Template
 
 type Template struct {
 	*template.Template
@@ -24,9 +24,9 @@ type Template struct {
 	condition func(*Graph) bool
 }
 
-func initTemplates() {
-	templates = MustParse(NewTemplate("mmapforge").ParseFS(templateDir, "template/*.tmpl"))
-}
+//func initTemplates() {
+//	//templates = MustParse(NewTemplate("mmapforge").ParseFS(templateDir, "template/*.tmpl"))
+//}
 
 func NewTemplate(name string) *Template {
 	t := &Template{Template: template.New(name)}

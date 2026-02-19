@@ -11,9 +11,9 @@ type Config struct {
 	Hooks     []Hook
 }
 
-func (c *Config) header() string {
-	if c.Header != "" {
-		return c.Header
-	}
-	return DefaultHeader
-}
+//func (c *Config) header() string {
+//	if c.Header != "" {
+//		return c.Header
+//	}
+//	return DefaultHeader
+//}

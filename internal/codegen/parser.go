@@ -113,7 +113,7 @@ func parseVersionFromDirective(text string) (uint32, bool) {
 }
 
 func parseFields(st *ast.StructType) ([]mmapforge.FieldDef, error) {
-	var fields []mmapforge.FieldDef
+	fields := make([]mmapforge.FieldDef, 0, len(st.Fields.List))
 	for _, field := range st.Fields.List {
 		if len(field.Names) == 0 {
 			continue

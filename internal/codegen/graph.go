@@ -76,7 +76,7 @@ func generate(g *Graph) error {
 		return fmt.Errorf("mmapforge: create target dir: %w", err)
 	}
 
-	initTemplates()
+	//initTemplates()
 
 	//for _, ext := range g.Templates {
 	//	templates.Funcs(ext.FuncMap)
