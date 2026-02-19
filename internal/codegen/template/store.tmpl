@@ -1,0 +1,117 @@
+{{ define "store" -}}
+{{ .Header }}
+
+package {{ .Package }}
+
+import (
+	mmapforge "github.com/CreditWorthy/mmapforge.git"
+)
+
+// {{ .LayoutFuncName }} returns the record layout for {{ .Name }}.
+func {{ .LayoutFuncName }}() *mmapforge.RecordLayout {
+	fields := []mmapforge.FieldDef{
+		{{- range .Fields }}
+		{Name: "{{ .Name }}", GoName: "{{ .GoName }}", Type: {{ .TypeConstant }}, MaxSize: {{ .MaxSize }}},
+		{{- end }}
+	}
+	layout, err := mmapforge.ComputeLayout(fields)
+	if err != nil {
+		panic("mmapforge: layout computation failed: " + err.Error())
+	}
+	return layout
+}
+
+// {{ .StoreName }} is the typed store for {{ .Name }} records.
+type {{ .StoreName }} struct {
+	*mmapforge.Store
+}
+
+// {{ .NewStoreFuncName }} creates a new {{ .Name }} store at the given path.
+func {{ .NewStoreFuncName }}(path string) (*{{ .StoreName }}, error) {
+	layout := {{ .LayoutFuncName }}()
+	s, err := mmapforge.CreateStore(path, layout, {{ .SchemaVersion }})
+	if err != nil {
+		return nil, err
+	}
+	return &{{ .StoreName }}{Store: s}, nil
+}
+
+// {{ .OpenStoreFuncName }} opens an existing {{ .Name }} store at the given path.
+func {{ .OpenStoreFuncName }}(path string) (*{{ .StoreName }}, error) {
+	layout := {{ .LayoutFuncName }}()
+	s, err := mmapforge.OpenStore(path, layout, {{ .SchemaVersion }})
+	if err != nil {
+		return nil, err
+	}
+	return &{{ .StoreName }}{Store: s}, nil
+}
+
+{{- range .Fields }}
+
+// {{ .GetterName }} returns the {{ .GoName }} field for the record at idx.
+func ({{ $.Receiver }} *{{ $.StoreName }}) {{ .GetterName }}(idx int) ({{ .GoType }}, error) {
+	for {
+		seq := {{ $.Receiver }}.SeqReadBegin(idx)
+		if seq&1 != 0 {
+			continue
+		}
+		v, err := {{ .ReadCall }}
+		if err != nil {
+			return v, err
+		}
+		if {{ $.Receiver }}.SeqReadValid(idx, seq) {
+			return v, nil
+		}
+	}
+}
+
+// {{ .SetterName }} sets the {{ .GoName }} field for the record at idx.
+func ({{ $.Receiver }} *{{ $.StoreName }}) {{ .SetterName }}(idx int, val {{ .GoType }}) error {
+	{{ $.Receiver }}.SeqBeginWrite(idx)
+	err := {{ .WriteCall }}
+	{{ $.Receiver }}.SeqEndWrite(idx)
+	return err
+}
+{{- end }}
+
+// {{ .RecordName }} holds all fields of a {{ .Name }} record.
+type {{ .RecordName }} struct {
+	{{- range .Fields }}
+	{{ .GoName }} {{ .GoType }}
+	{{- end }}
+}
+
+// Get reads all fields atomically for the record at idx.
+func ({{ .Receiver }} *{{ .StoreName }}) Get(idx int) (*{{ .RecordName }}, error) {
+	for {
+		seq := {{ .Receiver }}.SeqReadBegin(idx)
+		if seq&1 != 0 {
+			continue
+		}
+		rec := &{{ .RecordName }}{}
+		var err error
+		{{- range .Fields }}
+		rec.{{ .GoName }}, err = {{ .ReadCall }}
+		if err != nil {
+			return nil, err
+		}
+		{{- end }}
+		if {{ .Receiver }}.SeqReadValid(idx, seq) {
+			return rec, nil
+		}
+	}
+}
+
+// Set writes all fields atomically for the record at idx.
+func ({{ .Receiver }} *{{ .StoreName }}) Set(idx int, rec *{{ .RecordName }}) error {
+	{{ .Receiver }}.SeqBeginWrite(idx)
+	{{- range .Fields }}
+	if err := {{ .WriteCallRec }}; err != nil {
+		{{ $.Receiver }}.SeqEndWrite(idx)
+		return err
+	}
+	{{- end }}
+	{{ .Receiver }}.SeqEndWrite(idx)
+	return nil
+}
+{{- end }}
