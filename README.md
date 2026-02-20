@@ -3,6 +3,7 @@
 [![CI](https://github.com/CreditWorthy/mmapforge/actions/workflows/ci.yml/badge.svg)](https://github.com/CreditWorthy/mmapforge/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/CreditWorthy/mmapforge)](https://goreportcard.com/report/github.com/CreditWorthy/mmapforge)
 [![GoDoc](https://pkg.go.dev/badge/github.com/CreditWorthy/mmapforge.svg)](https://pkg.go.dev/github.com/CreditWorthy/mmapforge)
+[![Coverage](https://codecov.io/gh/CreditWorthy/mmapforge/branch/main/graph/badge.svg)](https://codecov.io/gh/CreditWorthy/mmapforge)
 [![License](https://img.shields.io/github/license/CreditWorthy/mmapforge)](https://github.com/CreditWorthy/mmapforge/blob/main/LICENSE)
 
 > **Incubating — still a work in progress.**
