@@ -224,6 +224,40 @@ func (f *Field) WriteCallRec() string {
 	return f.writeCallWith("rec." + f.GoName)
 }
 
+// TestValue returns a Go literal for a representative test value.
+func (f *Field) TestValue() string {
+	switch f.Type {
+	case mmapforge.FieldBool:
+		return "true"
+	case mmapforge.FieldInt8:
+		return "int8(42)"
+	case mmapforge.FieldUint8:
+		return "uint8(200)"
+	case mmapforge.FieldInt16:
+		return "int16(-1234)"
+	case mmapforge.FieldUint16:
+		return "uint16(54321)"
+	case mmapforge.FieldInt32:
+		return "int32(-100000)"
+	case mmapforge.FieldUint32:
+		return "uint32(3000000000)"
+	case mmapforge.FieldInt64:
+		return "int64(-9000000000)"
+	case mmapforge.FieldUint64:
+		return "uint64(18000000000000)"
+	case mmapforge.FieldFloat32:
+		return "float32(1.5)"
+	case mmapforge.FieldFloat64:
+		return "float64(2.5)"
+	case mmapforge.FieldString:
+		return `"hello"`
+	case mmapforge.FieldBytes:
+		return "[]byte{1, 2, 3}"
+	default:
+		return "nil"
+	}
+}
+
 func (f *Field) writeCallWith(val string) string {
 	switch f.Type {
 	case mmapforge.FieldBool:

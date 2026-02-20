@@ -49,7 +49,7 @@ func NewGraph(c *Config, schemas []StructSchema) (*Graph, error) {
 
 	g := &Graph{
 		Config: c,
-		Nodes:  make([]*Type, len(schemas)),
+		Nodes:  make([]*Type, 0, len(schemas)),
 	}
 
 	for _, s := range schemas {

@@ -20,6 +20,24 @@ func TestTypeTemplate_Format(t *testing.T) {
 	}
 }
 
+func TestTypeTemplate_Format_StoreTest(t *testing.T) {
+	if len(TypeTemplates) < 2 {
+		t.Fatal("TypeTemplates should have at least 2 entries")
+	}
+
+	tmpl := TypeTemplates[1]
+
+	if tmpl.Name != "store_test" {
+		t.Errorf("Name = %q, want %q", tmpl.Name, "store_test")
+	}
+
+	typ := &Type{Name: "Account"}
+	got := tmpl.Format(typ)
+	if got != "account_store_test.go" {
+		t.Errorf("Format() = %q, want %q", got, "account_store_test.go")
+	}
+}
+
 func TestTypeTemplate_Cond_Nil(t *testing.T) {
 	tmpl := TypeTemplates[0]
 	if tmpl.Cond != nil {

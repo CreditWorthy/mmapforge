@@ -35,7 +35,10 @@ func ParseFile(path string) ([]StructSchema, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mmapforge: parse %s: %w", path, err)
 	}
+	return extractSchemas(f, fset)
+}
 
+func extractSchemas(f *ast.File, fset *token.FileSet) ([]StructSchema, error) {
 	pkg := f.Name.Name
 	var schemas []StructSchema
 

@@ -26,6 +26,12 @@ var TypeTemplates = []TypeTemplate{
 			return strings.ToLower(t.Name) + "_store.go"
 		},
 	},
+	{
+		Name: "store_test",
+		Format: func(t *Type) string {
+			return strings.ToLower(t.Name) + "_store_test.go"
+		},
+	},
 }
 
 // GraphTemplates is the list of graph-wide templates to execute.
