@@ -15,6 +15,7 @@ const initialCapacity = 64
 var statFileFunc = func(f *os.File) (os.FileInfo, error) { return f.Stat() }
 var encodeHeaderFunc = EncodeHeader
 
+// Store is the base mmap-backed record store.
 type Store struct {
 	region         *Region
 	layout         *RecordLayout
@@ -27,6 +28,7 @@ type Store struct {
 	writable       bool
 }
 
+// CreateStore creates a new mmapforge file at path with the given layout and schema version.
 func CreateStore(path string, layout *RecordLayout, schemaVersion uint32) (*Store, error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
@@ -76,6 +78,7 @@ func CreateStore(path string, layout *RecordLayout, schemaVersion uint32) (*Stor
 	return s, nil
 }
 
+// OpenStore opens an existing mmapforge file and validates the schema hash.
 func OpenStore(path string, layout *RecordLayout) (*Store, error) {
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
@@ -141,6 +144,7 @@ func OpenStore(path string, layout *RecordLayout) (*Store, error) {
 	return s, nil
 }
 
+// Close syncs and closes the store. All references into store memory become invalid.
 func (s *Store) Close() error {
 	if s.region == nil {
 		return fmt.Errorf("mmapforge: close %s: %w", s.path, ErrClosed)
@@ -169,6 +173,7 @@ func (s *Store) Close() error {
 	return err
 }
 
+// Sync flushes the header and dirty pages to disk.
 func (s *Store) Sync() error {
 	if s.region == nil {
 		return fmt.Errorf("mmapforge: sync %s: %w", s.path, ErrClosed)
@@ -179,6 +184,7 @@ func (s *Store) Sync() error {
 	return s.region.Sync()
 }
 
+// Len returns the number of records in the store.
 func (s *Store) Len() int {
 	v := s.recordCountPtr.Load()
 	if v > uint64(math.MaxInt) {
@@ -187,6 +193,7 @@ func (s *Store) Len() int {
 	return int(v)
 }
 
+// Cap returns how many records fit in the current file mapping.
 func (s *Store) Cap() int {
 	v := s.capacityPtr.Load()
 	if v > uint64(math.MaxInt) {
@@ -195,6 +202,7 @@ func (s *Store) Cap() int {
 	return int(v)
 }
 
+// Append adds a new zero-filled record and returns its index.
 func (s *Store) Append() (int, error) {
 	if s.region == nil {
 		return 0, fmt.Errorf("mmapforge: append %s: %w", s.path, ErrClosed)
@@ -220,11 +228,13 @@ func (s *Store) Append() (int, error) {
 	return int(idx), nil
 }
 
+// flushHeader writes the live record count back to the header and encodes it.
 func (s *Store) flushHeader() error {
 	s.header.RecordCount = s.recordCountPtr.Load()
 	return encodeHeaderFunc(s.region.Slice(0, HeaderSize), s.header)
 }
 
+// grow doubles the capacity of the store.
 func (s *Store) grow() error {
 	newCap := s.capacityPtr.Load() * 2
 	if newCap == 0 {

@@ -9,14 +9,22 @@ import (
 )
 
 //go:embed template/*
-var _ embed.FS
+var templateDir embed.FS
 
 var defaultFuncMap = template.FuncMap{
 	"lower": strings.ToLower,
 	"upper": strings.ToUpper,
 }
 
-//var templates *Template
+var parseFilesFunc = func(inner *template.Template, filenames ...string) (*template.Template, error) {
+	return inner.ParseFiles(filenames...)
+}
+
+var addParseTreeFunc = func(inner *template.Template, name string, tree *parse.Tree) (*template.Template, error) {
+	return inner.AddParseTree(name, tree)
+}
+
+var templates *Template
 
 type Template struct {
 	*template.Template
@@ -24,9 +32,9 @@ type Template struct {
 	condition func(*Graph) bool
 }
 
-//func initTemplates() {
-//	//templates = MustParse(NewTemplate("mmapforge").ParseFS(templateDir, "template/*.tmpl"))
-//}
+func initTemplates() {
+	templates = MustParse(NewTemplate("mmapforge").ParseFS(templateDir, "template/*.tmpl"))
+}
 
 func NewTemplate(name string) *Template {
 	t := &Template{Template: template.New(name)}
@@ -73,14 +81,14 @@ func (t *Template) Parse(text string) (*Template, error) {
 }
 
 func (t *Template) ParseFiles(filenames ...string) (*Template, error) {
-	if _, err := t.Template.ParseFiles(filenames...); err != nil {
+	if _, err := parseFilesFunc(t.Template, filenames...); err != nil {
 		return nil, err
 	}
 	return t, nil
 }
 
 func (t *Template) AddParseTree(name string, tree *parse.Tree) (*Template, error) {
-	if _, err := t.Template.AddParseTree(name, tree); err != nil {
+	if _, err := addParseTreeFunc(t.Template, name, tree); err != nil {
 		return nil, err
 	}
 	return t, nil

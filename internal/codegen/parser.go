@@ -11,13 +11,24 @@ import (
 	"github.com/CreditWorthy/mmapforge"
 )
 
+// StructSchema is the parsed output of a Go struct annotated with
+// // mmapforge:schema version=N. It carries everything the emitter
 type StructSchema struct {
-	Name          string
-	Package       string
-	Fields        []mmapforge.FieldDef
+	// Name in the Go struct name
+	Name string
+
+	// Package is the Go package name
+	Package string
+
+	// Fields are the parsed field definitions.
+	Fields []mmapforge.FieldDef
+
+	// SchemaVersion is from the version=N directive.
 	SchemaVersion uint32
 }
 
+// ParseFile parses a Go source file and extracts all structs annotated
+// with // mmapforge:schema version=N.
 func ParseFile(path string) ([]StructSchema, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
@@ -66,6 +77,7 @@ func ParseFile(path string) ([]StructSchema, error) {
 	return schemas, nil
 }
 
+// findDirective looks for "mmapforge:schema version=N" in the doc
 func findDirective(f *ast.File, fset *token.FileSet, gen *ast.GenDecl, declIdx int) (uint32, bool) {
 	if gen.Doc != nil {
 		for _, c := range gen.Doc.List {
@@ -91,6 +103,8 @@ func findDirective(f *ast.File, fset *token.FileSet, gen *ast.GenDecl, declIdx i
 	return 0, false
 }
 
+// parseVersionFromDirective parses "// mmapforge:schema version=N"
+// and returns (N, true) on success.
 func parseVersionFromDirective(text string) (uint32, bool) {
 	text = strings.TrimPrefix(text, "//")
 	text = strings.TrimSpace(text)
@@ -112,6 +126,7 @@ func parseVersionFromDirective(text string) (uint32, bool) {
 	return 0, false
 }
 
+// parseFields extracts mmapforge.FieldDef entries from a struct's AST.
 func parseFields(st *ast.StructType) ([]mmapforge.FieldDef, error) {
 	fields := make([]mmapforge.FieldDef, 0, len(st.Fields.List))
 	for _, field := range st.Fields.List {
