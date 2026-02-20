@@ -8,6 +8,7 @@ var (
 	ErrCorrupted      = errors.New("mmapforge: file corrupted")
 	ErrBadMagic       = errors.New("mmapforge: invalid magic bytes")
 	ErrStringTooLong  = errors.New("mmapforge: string exceeds max size")
+	ErrBytesTooLong   = errors.New("mmapforge: bytes exceeds max size")
 	ErrReadOnly       = errors.New("mmapforge: store is read-only")
 	ErrClosed         = errors.New("mmapforge: store is closed")
 	ErrInvalidBool    = errors.New("mmapforge: invalid bool value")

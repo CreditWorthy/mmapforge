@@ -2,9 +2,9 @@ package codegen
 
 import (
 	"embed"
-	"html/template"
 	"io/fs"
 	"strings"
+	"text/template"
 	"text/template/parse"
 )
 

@@ -1,0 +1,316 @@
+{{ define "store_test" -}}
+//go:build unix
+
+{{ .Header }}
+
+package {{ .Package }}
+
+import (
+	"path/filepath"
+	"sync"
+	"testing"
+)
+
+func Test{{ .Name }}Store_CreateClose(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.mmf")
+	s, err := {{ .NewStoreFuncName }}(path)
+	if err != nil {
+		t.Fatalf("{{ .NewStoreFuncName }}: %v", err)
+	}
+	defer s.Close()
+
+	if s.Len() != 0 {
+		t.Fatalf("Len = %d, want 0", s.Len())
+	}
+}
+
+func Test{{ .Name }}Store_NewError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.mmf")
+	s, err := {{ .NewStoreFuncName }}(path)
+	if err != nil {
+		t.Fatalf("{{ .NewStoreFuncName }}: %v", err)
+	}
+	s.Close()
+
+	if _, err := {{ .NewStoreFuncName }}(path); err == nil {
+		t.Fatal("expected error creating store on existing path")
+	}
+}
+
+func Test{{ .Name }}Store_OpenError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nonexistent.mmf")
+	if _, err := {{ .OpenStoreFuncName }}(path); err == nil {
+		t.Fatal("expected error opening non-existent store")
+	}
+}
+
+func Test{{ .Name }}Store_FieldRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.mmf")
+	s, err := {{ .NewStoreFuncName }}(path)
+	if err != nil {
+		t.Fatalf("{{ .NewStoreFuncName }}: %v", err)
+	}
+	defer s.Close()
+
+	idx, err := s.Append()
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+{{ range .Fields }}
+	if err := s.{{ .SetterName }}(idx, {{ .TestValue }}); err != nil {
+		t.Fatalf("{{ .SetterName }}: %v", err)
+	}
+	{
+		got, err := s.{{ .GetterName }}(idx)
+		if err != nil {
+			t.Fatalf("{{ .GetterName }}: %v", err)
+		}
+		{{- if .IsBytes }}
+		if string(got) != string({{ .TestValue }}) {
+		{{- else }}
+		if got != {{ .TestValue }} {
+		{{- end }}
+			t.Errorf("{{ .GetterName }} = %v, want %v", got, {{ .TestValue }})
+		}
+	}
+{{ end -}}
+}
+
+func Test{{ .Name }}Store_GetOutOfBounds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.mmf")
+	s, err := {{ .NewStoreFuncName }}(path)
+	if err != nil {
+		t.Fatalf("{{ .NewStoreFuncName }}: %v", err)
+	}
+	defer s.Close()
+{{ range .Fields }}
+	if _, err := s.{{ .GetterName }}(0); err == nil {
+		t.Errorf("{{ .GetterName }}(0) on empty store: expected error")
+	}
+{{ end -}}
+}
+
+func Test{{ .Name }}Store_SetOutOfBounds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.mmf")
+	s, err := {{ .NewStoreFuncName }}(path)
+	if err != nil {
+		t.Fatalf("{{ .NewStoreFuncName }}: %v", err)
+	}
+	defer s.Close()
+{{ range .Fields }}
+	if err := s.{{ .SetterName }}(0, {{ .TestValue }}); err == nil {
+		t.Errorf("{{ .SetterName }}(0) on empty store: expected error")
+	}
+{{ end -}}
+}
+
+func Test{{ .Name }}Store_BulkGetSet(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.mmf")
+	s, err := {{ .NewStoreFuncName }}(path)
+	if err != nil {
+		t.Fatalf("{{ .NewStoreFuncName }}: %v", err)
+	}
+	defer s.Close()
+
+	idx, err := s.Append()
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	rec := &{{ .RecordName }}{
+		{{- range .Fields }}
+		{{ .GoName }}: {{ .TestValue }},
+		{{- end }}
+	}
+	if err := s.Set(idx, rec); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	got, err := s.Get(idx)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+{{ range .Fields }}
+	{{- if .IsBytes }}
+	if string(got.{{ .GoName }}) != string({{ .TestValue }}) {
+	{{- else }}
+	if got.{{ .GoName }} != {{ .TestValue }} {
+	{{- end }}
+		t.Errorf("Get().{{ .GoName }} = %v, want %v", got.{{ .GoName }}, {{ .TestValue }})
+	}
+{{ end -}}
+}
+
+func Test{{ .Name }}Store_BulkGetOutOfBounds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.mmf")
+	s, err := {{ .NewStoreFuncName }}(path)
+	if err != nil {
+		t.Fatalf("{{ .NewStoreFuncName }}: %v", err)
+	}
+	defer s.Close()
+
+	if _, err := s.Get(0); err == nil {
+		t.Error("Get(0) on empty store: expected error")
+	}
+}
+
+func Test{{ .Name }}Store_BulkSetOutOfBounds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.mmf")
+	s, err := {{ .NewStoreFuncName }}(path)
+	if err != nil {
+		t.Fatalf("{{ .NewStoreFuncName }}: %v", err)
+	}
+	defer s.Close()
+
+	if err := s.Set(0, &{{ .RecordName }}{}); err == nil {
+		t.Error("Set(0) on empty store: expected error")
+	}
+}
+
+func Test{{ .Name }}Store_MultipleRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.mmf")
+	s, err := {{ .NewStoreFuncName }}(path)
+	if err != nil {
+		t.Fatalf("{{ .NewStoreFuncName }}: %v", err)
+	}
+	defer s.Close()
+
+	const n = 10
+	for i := 0; i < n; i++ {
+		if _, err := s.Append(); err != nil {
+			t.Fatalf("Append(%d): %v", i, err)
+		}
+	}
+	if s.Len() != n {
+		t.Fatalf("Len = %d, want %d", s.Len(), n)
+	}
+
+	rec := &{{ .RecordName }}{
+		{{- range .Fields }}
+		{{ .GoName }}: {{ .TestValue }},
+		{{- end }}
+	}
+	for i := 0; i < n; i++ {
+		if err := s.Set(i, rec); err != nil {
+			t.Fatalf("Set(%d): %v", i, err)
+		}
+	}
+	for i := 0; i < n; i++ {
+		got, err := s.Get(i)
+		if err != nil {
+			t.Fatalf("Get(%d): %v", i, err)
+		}
+		{{- range .Fields }}
+		{{- if .IsBytes }}
+		if string(got.{{ .GoName }}) != string({{ .TestValue }}) {
+		{{- else }}
+		if got.{{ .GoName }} != {{ .TestValue }} {
+		{{- end }}
+			t.Errorf("Get(%d).{{ .GoName }} = %v, want %v", i, got.{{ .GoName }}, {{ .TestValue }})
+		}
+		{{- end }}
+	}
+}
+
+func Test{{ .Name }}Store_Persistence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.mmf")
+
+	{
+		s, err := {{ .NewStoreFuncName }}(path)
+		if err != nil {
+			t.Fatalf("{{ .NewStoreFuncName }}: %v", err)
+		}
+		idx, err := s.Append()
+		if err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+		rec := &{{ .RecordName }}{
+			{{- range .Fields }}
+			{{ .GoName }}: {{ .TestValue }},
+			{{- end }}
+		}
+		if err := s.Set(idx, rec); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}
+
+	{
+		s, err := {{ .OpenStoreFuncName }}(path)
+		if err != nil {
+			t.Fatalf("{{ .OpenStoreFuncName }}: %v", err)
+		}
+		defer s.Close()
+
+		if s.Len() != 1 {
+			t.Fatalf("Len = %d, want 1", s.Len())
+		}
+
+		got, err := s.Get(0)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+{{ range .Fields }}
+		{{- if .IsBytes }}
+		if string(got.{{ .GoName }}) != string({{ .TestValue }}) {
+		{{- else }}
+		if got.{{ .GoName }} != {{ .TestValue }} {
+		{{- end }}
+			t.Errorf("Get().{{ .GoName }} = %v, want %v", got.{{ .GoName }}, {{ .TestValue }})
+		}
+{{ end -}}
+	}
+}
+
+func Test{{ .Name }}Store_ConcurrentReadWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.mmf")
+	s, err := {{ .NewStoreFuncName }}(path)
+	if err != nil {
+		t.Fatalf("{{ .NewStoreFuncName }}: %v", err)
+	}
+	defer s.Close()
+
+	idx, err := s.Append()
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	const iterations = 2000
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		rec := &{{ .RecordName }}{
+			{{- range .Fields }}
+			{{ .GoName }}: {{ .TestValue }},
+			{{- end }}
+		}
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			_ = s.Set(idx, rec)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_, _ = s.Get(idx)
+			{{- range .Fields }}
+			_, _ = s.{{ .GetterName }}(idx)
+			{{- end }}
+		}
+		close(done)
+	}()
+
+	wg.Wait()
+}
+{{- end }}

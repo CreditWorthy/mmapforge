@@ -2,11 +2,11 @@ package codegen
 
 import (
 	"errors"
-	"html/template"
 	"os"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
+	"text/template"
 	"text/template/parse"
 )
 

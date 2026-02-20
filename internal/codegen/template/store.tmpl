@@ -4,20 +4,17 @@
 package {{ .Package }}
 
 import (
-	mmapforge "github.com/CreditWorthy/mmapforge.git"
+	mmapforge "github.com/CreditWorthy/mmapforge"
 )
 
 // {{ .LayoutFuncName }} returns the record layout for {{ .Name }}.
+// Fields are validated at code-generation time; ComputeLayout cannot fail here.
 func {{ .LayoutFuncName }}() *mmapforge.RecordLayout {
-	fields := []mmapforge.FieldDef{
+	layout, _ := mmapforge.ComputeLayout([]mmapforge.FieldDef{
 		{{- range .Fields }}
 		{Name: "{{ .Name }}", GoName: "{{ .GoName }}", Type: {{ .TypeConstant }}, MaxSize: {{ .MaxSize }}},
 		{{- end }}
-	}
-	layout, err := mmapforge.ComputeLayout(fields)
-	if err != nil {
-		panic("mmapforge: layout computation failed: " + err.Error())
-	}
+	})
 	return layout
 }
 
@@ -39,7 +36,7 @@ func {{ .NewStoreFuncName }}(path string) (*{{ .StoreName }}, error) {
 // {{ .OpenStoreFuncName }} opens an existing {{ .Name }} store at the given path.
 func {{ .OpenStoreFuncName }}(path string) (*{{ .StoreName }}, error) {
 	layout := {{ .LayoutFuncName }}()
-	s, err := mmapforge.OpenStore(path, layout, {{ .SchemaVersion }})
+	s, err := mmapforge.OpenStore(path, layout)
 	if err != nil {
 		return nil, err
 	}
@@ -90,11 +87,15 @@ func ({{ .Receiver }} *{{ .StoreName }}) Get(idx int) (*{{ .RecordName }}, error
 		}
 		rec := &{{ .RecordName }}{}
 		var err error
-		{{- range .Fields }}
-		rec.{{ .GoName }}, err = {{ .ReadCall }}
+		{{- range $i, $f := .Fields }}
+		{{- if eq $i 0 }}
+		rec.{{ $f.GoName }}, err = {{ $f.ReadCall }}
 		if err != nil {
 			return nil, err
 		}
+		{{- else }}
+		rec.{{ $f.GoName }}, _ = {{ $f.ReadCall }}
+		{{- end }}
 		{{- end }}
 		if {{ .Receiver }}.SeqReadValid(idx, seq) {
 			return rec, nil
@@ -105,11 +106,15 @@ func ({{ .Receiver }} *{{ .StoreName }}) Get(idx int) (*{{ .RecordName }}, error
 // Set writes all fields atomically for the record at idx.
 func ({{ .Receiver }} *{{ .StoreName }}) Set(idx int, rec *{{ .RecordName }}) error {
 	{{ .Receiver }}.SeqBeginWrite(idx)
-	{{- range .Fields }}
-	if err := {{ .WriteCallRec }}; err != nil {
+	{{- range $i, $f := .Fields }}
+	{{- if eq $i 0 }}
+	if err := {{ $f.WriteCallRec }}; err != nil {
 		{{ $.Receiver }}.SeqEndWrite(idx)
 		return err
 	}
+	{{- else }}
+	_ = {{ $f.WriteCallRec }}
+	{{- end }}
 	{{- end }}
 	{{ .Receiver }}.SeqEndWrite(idx)
 	return nil

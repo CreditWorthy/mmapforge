@@ -255,3 +255,15 @@ func (s *Store) grow() error {
 	s.capacityPtr.Store(newCap)
 	return nil
 }
+
+func (s *Store) fieldSlice(idx int, fieldOffset, fieldSize uint32) ([]byte, error) {
+	if s.region == nil {
+		return nil, fmt.Errorf("mmapforge: field access: %w", ErrClosed)
+	}
+	count := s.recordCountPtr.Load()
+	if idx < 0 || uint64(idx) >= count {
+		return nil, fmt.Errorf("mmapforge: record %d: %w (count=%d)", idx, ErrOutOfBounds, count)
+	}
+	off := HeaderSize + idx*s.recordSize + int(fieldOffset)
+	return s.region.Slice(off, int(fieldSize)), nil
+}
