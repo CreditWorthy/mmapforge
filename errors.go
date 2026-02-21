@@ -2,6 +2,7 @@ package mmapforge
 
 import "errors"
 
+// Sentinel errors returned by Store and Region operations.
 var (
 	ErrSchemaMismatch = errors.New("mmapforge: schema hash mismatch")
 	ErrOutOfBounds    = errors.New("mmapforge: index out of bounds")

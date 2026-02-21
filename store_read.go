@@ -9,6 +9,7 @@ import (
 	"unsafe"
 )
 
+// ReadBool reads a bool from record idx at the given byte offset.
 func (s *Store) ReadBool(idx int, offset uint32) (bool, error) {
 	b, err := s.fieldSlice(idx, offset, 1)
 	if err != nil {
@@ -17,6 +18,7 @@ func (s *Store) ReadBool(idx int, offset uint32) (bool, error) {
 	return b[0] == 1, nil
 }
 
+// ReadInt8 reads an int8 from record idx at the given byte offset.
 func (s *Store) ReadInt8(idx int, offset uint32) (int8, error) {
 	b, err := s.fieldSlice(idx, offset, 1)
 	if err != nil {
@@ -25,6 +27,7 @@ func (s *Store) ReadInt8(idx int, offset uint32) (int8, error) {
 	return int8(b[0]), nil
 }
 
+// ReadUint8 reads a uint8 from record idx at the given byte offset.
 func (s *Store) ReadUint8(idx int, offset uint32) (uint8, error) {
 	b, err := s.fieldSlice(idx, offset, 1)
 	if err != nil {
@@ -33,6 +36,7 @@ func (s *Store) ReadUint8(idx int, offset uint32) (uint8, error) {
 	return b[0], nil
 }
 
+// ReadInt16 reads an int16 from record idx at the given byte offset.
 func (s *Store) ReadInt16(idx int, offset uint32) (int16, error) {
 	b, err := s.fieldSlice(idx, offset, 2)
 	if err != nil {
@@ -41,6 +45,7 @@ func (s *Store) ReadInt16(idx int, offset uint32) (int16, error) {
 	return *(*int16)(unsafe.Pointer(&b[0])), nil
 }
 
+// ReadUint16 reads a uint16 from record idx at the given byte offset.
 func (s *Store) ReadUint16(idx int, offset uint32) (uint16, error) {
 	b, err := s.fieldSlice(idx, offset, 2)
 	if err != nil {
@@ -49,6 +54,7 @@ func (s *Store) ReadUint16(idx int, offset uint32) (uint16, error) {
 	return binary.LittleEndian.Uint16(b), nil
 }
 
+// ReadInt32 reads an int32 from record idx at the given byte offset.
 func (s *Store) ReadInt32(idx int, offset uint32) (int32, error) {
 	b, err := s.fieldSlice(idx, offset, 4)
 	if err != nil {
@@ -57,6 +63,7 @@ func (s *Store) ReadInt32(idx int, offset uint32) (int32, error) {
 	return *(*int32)(unsafe.Pointer(&b[0])), nil
 }
 
+// ReadUint32 reads a uint32 from record idx at the given byte offset.
 func (s *Store) ReadUint32(idx int, offset uint32) (uint32, error) {
 	b, err := s.fieldSlice(idx, offset, 4)
 	if err != nil {
@@ -65,6 +72,7 @@ func (s *Store) ReadUint32(idx int, offset uint32) (uint32, error) {
 	return binary.LittleEndian.Uint32(b), nil
 }
 
+// ReadInt64 reads an int64 from record idx at the given byte offset.
 func (s *Store) ReadInt64(idx int, offset uint32) (int64, error) {
 	b, err := s.fieldSlice(idx, offset, 8)
 	if err != nil {
@@ -73,6 +81,7 @@ func (s *Store) ReadInt64(idx int, offset uint32) (int64, error) {
 	return *(*int64)(unsafe.Pointer(&b[0])), nil
 }
 
+// ReadUint64 reads a uint64 from record idx at the given byte offset.
 func (s *Store) ReadUint64(idx int, offset uint32) (uint64, error) {
 	b, err := s.fieldSlice(idx, offset, 8)
 	if err != nil {
@@ -81,6 +90,7 @@ func (s *Store) ReadUint64(idx int, offset uint32) (uint64, error) {
 	return binary.LittleEndian.Uint64(b), nil
 }
 
+// ReadFloat32 reads a float32 from record idx at the given byte offset.
 func (s *Store) ReadFloat32(idx int, offset uint32) (float32, error) {
 	b, err := s.fieldSlice(idx, offset, 4)
 	if err != nil {
@@ -89,6 +99,7 @@ func (s *Store) ReadFloat32(idx int, offset uint32) (float32, error) {
 	return math.Float32frombits(binary.LittleEndian.Uint32(b)), nil
 }
 
+// ReadFloat64 reads a float64 from record idx at the given byte offset.
 func (s *Store) ReadFloat64(idx int, offset uint32) (float64, error) {
 	b, err := s.fieldSlice(idx, offset, 8)
 	if err != nil {

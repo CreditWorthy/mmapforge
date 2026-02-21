@@ -6,6 +6,7 @@ import (
 	"fmt"
 )
 
+// Header is the 64-byte metadata block at the start of every mmapforge file.
 type Header struct {
 	Magic         [4]byte
 	FormatVersion uint32

@@ -9,6 +9,7 @@ import (
 	"unsafe"
 )
 
+// WriteBool writes a bool to record idx at the given byte offset.
 func (s *Store) WriteBool(idx int, offset uint32, val bool) error {
 	b, err := s.fieldSlice(idx, offset, 1)
 	if err != nil {
@@ -22,6 +23,7 @@ func (s *Store) WriteBool(idx int, offset uint32, val bool) error {
 	return nil
 }
 
+// WriteInt8 writes an int8 to record idx at the given byte offset.
 func (s *Store) WriteInt8(idx int, offset uint32, val int8) error {
 	b, err := s.fieldSlice(idx, offset, 1)
 	if err != nil {
@@ -31,6 +33,7 @@ func (s *Store) WriteInt8(idx int, offset uint32, val int8) error {
 	return nil
 }
 
+// WriteUint8 writes a uint8 to record idx at the given byte offset.
 func (s *Store) WriteUint8(idx int, offset uint32, val uint8) error {
 	b, err := s.fieldSlice(idx, offset, 1)
 	if err != nil {
@@ -40,6 +43,7 @@ func (s *Store) WriteUint8(idx int, offset uint32, val uint8) error {
 	return nil
 }
 
+// WriteInt16 writes an int16 to record idx at the given byte offset.
 func (s *Store) WriteInt16(idx int, offset uint32, val int16) error {
 	b, err := s.fieldSlice(idx, offset, 2)
 	if err != nil {
@@ -49,6 +53,7 @@ func (s *Store) WriteInt16(idx int, offset uint32, val int16) error {
 	return nil
 }
 
+// WriteUint16 writes a uint16 to record idx at the given byte offset.
 func (s *Store) WriteUint16(idx int, offset uint32, val uint16) error {
 	b, err := s.fieldSlice(idx, offset, 2)
 	if err != nil {
@@ -58,6 +63,7 @@ func (s *Store) WriteUint16(idx int, offset uint32, val uint16) error {
 	return nil
 }
 
+// WriteInt32 writes an int32 to record idx at the given byte offset.
 func (s *Store) WriteInt32(idx int, offset uint32, val int32) error {
 	b, err := s.fieldSlice(idx, offset, 4)
 	if err != nil {
@@ -67,6 +73,7 @@ func (s *Store) WriteInt32(idx int, offset uint32, val int32) error {
 	return nil
 }
 
+// WriteUint32 writes a uint32 to record idx at the given byte offset.
 func (s *Store) WriteUint32(idx int, offset uint32, val uint32) error {
 	b, err := s.fieldSlice(idx, offset, 4)
 	if err != nil {
@@ -76,6 +83,7 @@ func (s *Store) WriteUint32(idx int, offset uint32, val uint32) error {
 	return nil
 }
 
+// WriteInt64 writes an int64 to record idx at the given byte offset.
 func (s *Store) WriteInt64(idx int, offset uint32, val int64) error {
 	b, err := s.fieldSlice(idx, offset, 8)
 	if err != nil {
@@ -85,6 +93,7 @@ func (s *Store) WriteInt64(idx int, offset uint32, val int64) error {
 	return nil
 }
 
+// WriteUint64 writes a uint64 to record idx at the given byte offset.
 func (s *Store) WriteUint64(idx int, offset uint32, val uint64) error {
 	b, err := s.fieldSlice(idx, offset, 8)
 	if err != nil {
@@ -94,6 +103,7 @@ func (s *Store) WriteUint64(idx int, offset uint32, val uint64) error {
 	return nil
 }
 
+// WriteFloat32 writes a float32 to record idx at the given byte offset.
 func (s *Store) WriteFloat32(idx int, offset uint32, val float32) error {
 	b, err := s.fieldSlice(idx, offset, 4)
 	if err != nil {
@@ -103,6 +113,7 @@ func (s *Store) WriteFloat32(idx int, offset uint32, val float32) error {
 	return nil
 }
 
+// WriteFloat64 writes a float64 to record idx at the given byte offset.
 func (s *Store) WriteFloat64(idx int, offset uint32, val float64) error {
 	b, err := s.fieldSlice(idx, offset, 8)
 	if err != nil {
