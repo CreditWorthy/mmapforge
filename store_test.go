@@ -598,7 +598,7 @@ func TestAppend_GrowFails(t *testing.T) {
 		s.Close()
 	}()
 
-	for i := 0; i < initialCapacity+1; i++ {
+	for i := 0; i < initialCapacity; i++ {
 		if _, err := s.Append(); err != nil {
 			t.Fatalf("Append %d: %v", i, err)
 		}

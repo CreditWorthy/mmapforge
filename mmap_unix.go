@@ -16,8 +16,11 @@ import (
 // and reuse it everywhere instead of asking the OS every time
 var pageSize = os.Getpagesize()
 
-// how much virtual address space we reserve upfront when mapping a file
-const DefaultMaxVA = 1 << 3
+// DefaultMaxVA is the fallback virtual address reservation when no reserveVA
+// is passed to Map. Set low because callers should always provide an explicit
+// value (e.g. StoreReserveVA). The actual reservation is clamped to at least
+// the page-aligned file size, so this only controls headroom for future growth.
+const DefaultMaxVA = 1 << 30
 
 // functions can be overridden for testing
 var mmapFixedFunc = mmapFixed
