@@ -164,7 +164,7 @@ func parseFields(st *ast.StructType) ([]mmapforge.FieldDef, error) {
 	return fields, nil
 }
 
-// parseMmapTag decodes `mmap:"name,,max_size"`. Returns the mmap field
+// parseMmapTag decodes `mmap:"name,max_size"`. Returns the mmap field
 // name (defaults to lowercase goName) and max_size.
 func parseMmapTag(raw string, goName string) (string, uint32, error) {
 	if raw == "" {
@@ -178,10 +178,10 @@ func parseMmapTag(raw string, goName string) (string, uint32, error) {
 	}
 
 	var maxSize uint32
-	if len(parts) >= 3 && parts[2] != "" {
-		v, err := strconv.ParseUint(parts[2], 10, 32)
+	if len(parts) >= 2 && parts[1] != "" {
+		v, err := strconv.ParseUint(parts[1], 10, 32)
 		if err != nil {
-			return "", 0, fmt.Errorf("invalid max_size %q: %w", parts[2], err)
+			return "", 0, fmt.Errorf("invalid max_size %q: %w", parts[1], err)
 		}
 		maxSize = uint32(v)
 	}

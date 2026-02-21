@@ -44,7 +44,7 @@ type Tick struct {
 }
 ```
 
-String fields take a max size after the name (e.g. `symbol,64` for a 64-byte string). Numeric fields are fixed size.
+String and `[]byte` fields require a max size after the name (e.g. `mmap:"name,64"` for a 64-byte max). Numeric fields are fixed size.
 
 ### 2. Generate the store
 

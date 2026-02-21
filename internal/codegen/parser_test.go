@@ -28,7 +28,7 @@ func TestParseFile_Basic(t *testing.T) {
 type Player struct {
 	ID    uint64
 	Score int32
-	Name  string ` + "`mmap:\"name,,32\"`" + `
+	Name  string ` + "`mmap:\"name,32\"`" + `
 }
 `
 	schemas, err := ParseFile(writeTempGo(t, src))
@@ -170,7 +170,7 @@ func TestParseFile_EmbeddedFieldSkipped(t *testing.T) {
 // mmapforge:schema version=1
 type E struct {
 	int32
-	Name string ` + "`mmap:\"name,,16\"`" + `
+	Name string ` + "`mmap:\"name,16\"`" + `
 }
 `
 	schemas, err := ParseFile(writeTempGo(t, src))
@@ -207,7 +207,7 @@ type S struct { Data []byte }
 func TestParseFile_BadMmapTag(t *testing.T) {
 	src := `package x
 // mmapforge:schema version=1
-type S struct { V int32 ` + "`mmap:\"v,,notanumber\"`" + ` }
+type S struct { V int32 ` + "`mmap:\"v,notanumber\"`" + ` }
 `
 	_, err := ParseFile(writeTempGo(t, src))
 	if err == nil {
@@ -251,11 +251,11 @@ func TestParseMmapTag(t *testing.T) {
 		{"", "Foo", "foo", 0, false},
 		{"bar", "Foo", "bar", 0, false},
 		{",", "Foo", "foo", 0, false},
-		{",,32", "Foo", "foo", 32, false},
-		{"myname,,64", "Foo", "myname", 64, false},
-		{"name,opts,128", "Foo", "name", 128, false},
-		{",,notanum", "Foo", "", 0, true},
-		{"name,,", "Foo", "name", 0, false},
+		{",32", "Foo", "foo", 32, false},
+		{"myname,64", "Foo", "myname", 64, false},
+		{"name,128", "Foo", "name", 128, false},
+		{",notanum", "Foo", "", 0, true},
+		{"name,", "Foo", "name", 0, false},
 	}
 	for _, tc := range cases {
 		name, ms, err := parseMmapTag(tc.raw, tc.goName)
@@ -281,7 +281,7 @@ func TestTagValue(t *testing.T) {
 		{nil, ""},
 		{&ast.BasicLit{Value: "`json:\"x\"`"}, ""},
 		{&ast.BasicLit{Value: "`mmap:\"hello\"`"}, "hello"},
-		{&ast.BasicLit{Value: "`json:\"x\" mmap:\"val,,32\"`"}, "val,,32"},
+		{&ast.BasicLit{Value: "`json:\"x\" mmap:\"val,32\"`"}, "val,32"},
 		{&ast.BasicLit{Value: "`mmap:\"unterminated`"}, ""},
 		{&ast.BasicLit{Value: "\"mmap:\\\"x\\\"\""}, ""},
 	}
@@ -503,8 +503,8 @@ type All struct {
 	I uint64
 	J float32
 	K float64
-	L string  ` + "`mmap:\"l,,64\"`" + `
-	M []byte  ` + "`mmap:\"m,,128\"`" + `
+	L string  ` + "`mmap:\"l,64\"`" + `
+	M []byte  ` + "`mmap:\"m,128\"`" + `
 }
 `
 	schemas, err := ParseFile(writeTempGo(t, src))
