@@ -141,6 +141,7 @@ func OpenStore(path string, layout *RecordLayout) (*Store, error) {
 
 	s.recordCountPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + 48))
 	s.capacityPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + 56))
+	s.recoverSeqlocks()
 	return s, nil
 }
 
@@ -266,4 +267,24 @@ func (s *Store) fieldSlice(idx int, fieldOffset, fieldSize uint32) ([]byte, erro
 	}
 	off := HeaderSize + idx*s.recordSize + int(fieldOffset)
 	return s.region.Slice(off, int(fieldSize)), nil
+}
+
+// recoverSeqlocks scans all records and resets any stuck (odd) seqlock
+// counters to the next even value. This recovers from a process crash
+// that happened mid-write, preventing readers from spinning forever.
+func (s *Store) recoverSeqlocks() int {
+	count := s.recordCountPtr.Load()
+	recovered := 0
+
+	for i := uint64(0); i < count; i++ {
+		off := uintptr(HeaderSize) + uintptr(i)*uintptr(s.recordSize)
+		ptr := (*atomic.Uint64)(unsafe.Pointer(s.region.base + off))
+		seq := ptr.Load()
+		if seq&1 != 0 {
+			ptr.Store(seq + 1)
+			recovered++
+		}
+	}
+
+	return recovered
 }
