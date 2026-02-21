@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
@@ -166,7 +167,14 @@ func Map(f *os.File, size int, writable bool, access AccessPattern, reserveVA ..
 	}
 
 	r.size.Store(int64(size))
-	return &r, nil
+	rp := &r
+	runtime.SetFinalizer(rp, func(r *Region) {
+		if r.size.Load() != 0 || r.maxVA != 0 {
+			_, _ = fmt.Fprintf(os.Stderr, "mmapforge: Region for %s was garbage collected without Close()\n", r.file.Name())
+			_ = r.Close()
+		}
+	})
+	return rp, nil
 }
 
 // mmapFixed <- syscall wrapper that maps a file at an exact address
@@ -282,6 +290,7 @@ func (r *Region) Unmap() error {
 
 // Close unmaps the region and closes the file descriptor.
 func (r *Region) Close() error {
+	runtime.SetFinalizer(r, nil)
 	unmapErr := r.Unmap()
 	closeErr := r.file.Close()
 	if unmapErr != nil {
