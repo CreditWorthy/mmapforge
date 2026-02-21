@@ -12,6 +12,12 @@ import (
 
 const initialCapacity = 64
 
+// Header field offsets — must match EncodeHeader/DecodeHeader in header.go.
+const (
+	offsetRecordCount = 48
+	offsetCapacity    = 56
+)
+
 var statFileFunc = func(f *os.File) (os.FileInfo, error) { return f.Stat() }
 var encodeHeaderFunc = EncodeHeader
 
@@ -73,8 +79,8 @@ func CreateStore(path string, layout *RecordLayout, schemaVersion uint32) (*Stor
 		recordSize: int(layout.RecordSize),
 	}
 
-	s.recordCountPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + 48))
-	s.capacityPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + 56))
+	s.recordCountPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + offsetRecordCount))
+	s.capacityPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + offsetCapacity))
 	return s, nil
 }
 
@@ -139,8 +145,8 @@ func OpenStore(path string, layout *RecordLayout) (*Store, error) {
 		recordSize: int(layout.RecordSize),
 	}
 
-	s.recordCountPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + 48))
-	s.capacityPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + 56))
+	s.recordCountPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + offsetRecordCount))
+	s.capacityPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + offsetCapacity))
 	s.recoverSeqlocks()
 	return s, nil
 }
@@ -216,13 +222,13 @@ func (s *Store) Append() (int, error) {
 	defer s.appendMu.Unlock()
 
 	idx := s.recordCountPtr.Load()
-	if idx > s.capacityPtr.Load() {
+	if idx >= s.capacityPtr.Load() {
 		if err := s.grow(); err != nil {
 			return 0, err
 		}
 	}
 
-	s.recordCountPtr.CompareAndSwap(idx, idx+1)
+	s.recordCountPtr.Store(idx + 1)
 	if idx > uint64(math.MaxInt) {
 		return 0, fmt.Errorf("mmapforge: append %s: record index %d overflows int", s.path, idx)
 	}

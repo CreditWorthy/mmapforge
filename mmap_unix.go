@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
@@ -16,12 +17,16 @@ import (
 // and reuse it everywhere instead of asking the OS every time
 var pageSize = os.Getpagesize()
 
-// how much virtual address space we reserve upfront when mapping a file
-const DefaultMaxVA = 1 << 3
+// DefaultMaxVA is the fallback virtual address reservation when no reserveVA
+// is passed to Map. Set low because callers should always provide an explicit
+// value (e.g. StoreReserveVA). The actual reservation is clamped to at least
+// the page-aligned file size, so this only controls headroom for future growth.
+const DefaultMaxVA = 1 << 30
 
 // functions can be overridden for testing
 var mmapFixedFunc = mmapFixed
 var madviseFunc = madviseAt
+var regionFinalizerFunc = regionFinalizer
 var mmapSyscall = func(addr, length, prot, flags, fd, offset uintptr) (uintptr, error) {
 	r, _, errno := syscall.Syscall6(syscall.SYS_MMAP, addr, length, prot, flags, fd, offset)
 	if errno != 0 {
@@ -163,7 +168,9 @@ func Map(f *os.File, size int, writable bool, access AccessPattern, reserveVA ..
 	}
 
 	r.size.Store(int64(size))
-	return &r, nil
+	rp := &r
+	runtime.SetFinalizer(rp, regionFinalizerFunc)
+	return rp, nil
 }
 
 // mmapFixed <- syscall wrapper that maps a file at an exact address
@@ -277,8 +284,16 @@ func (r *Region) Unmap() error {
 	return nil
 }
 
+func regionFinalizer(r *Region) {
+	if r.size.Load() != 0 || r.maxVA != 0 {
+		_, _ = fmt.Fprintf(os.Stderr, "mmapforge: Region for %s was garbage collected without Close()\n", r.file.Name())
+		_ = r.Close()
+	}
+}
+
 // Close unmaps the region and closes the file descriptor.
 func (r *Region) Close() error {
+	runtime.SetFinalizer(r, nil)
 	unmapErr := r.Unmap()
 	closeErr := r.file.Close()
 	if unmapErr != nil {

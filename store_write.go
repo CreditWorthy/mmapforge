@@ -129,6 +129,8 @@ func (s *Store) WriteString(idx int, offset, fieldSize, maxSize uint32, val stri
 			return err
 		}
 
+		// Write length prefix via unsafe to avoid gosec G115 (int → uint32 narrowing).
+		// n is bounds-checked above so the low 32 bits are the correct value on LE.
 		*(*uint32)(unsafe.Pointer(&b[0])) = *(*uint32)(unsafe.Pointer(&n))
 		copy(b[4:], val)
 		clear(b[4+n:])
@@ -150,6 +152,8 @@ func (s *Store) WriteBytes(idx int, offset, fieldSize, maxSize uint32, val []byt
 			return err
 		}
 
+		// Write length prefix via unsafe to avoid gosec G115 (int → uint32 narrowing).
+		// n is bounds-checked above so the low 32 bits are the correct value on LE.
 		*(*uint32)(unsafe.Pointer(&b[0])) = *(*uint32)(unsafe.Pointer(&n))
 		copy(b[4:], val)
 		clear(b[4+n:])
