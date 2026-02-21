@@ -95,3 +95,17 @@ func TestDecodeHeader_RoundTrip(t *testing.T) {
 		t.Errorf("Capacity = %d, want %d", got.Capacity, h.Capacity)
 	}
 }
+
+func FuzzDecodeHeader(f *testing.F) {
+	f.Add(make([]byte, 64))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		h, err := DecodeHeader(data)
+		if err != nil {
+			return
+		}
+		buf := make([]byte, HeaderSize)
+		if err := EncodeHeader(buf, h); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
