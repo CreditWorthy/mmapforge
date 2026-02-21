@@ -851,3 +851,161 @@ func TestLen_And_Cap(t *testing.T) {
 		t.Errorf("Cap = %d, want %d (should not grow)", s.Cap(), initialCapacity)
 	}
 }
+
+func TestRecoverSeqlocks_StuckOddCounter(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := s.Append()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.SeqBeginWrite(idx)
+	seq := s.SeqReadBegin(idx)
+	if seq&1 != 1 {
+		t.Fatalf("seq should be odd after BeginWrite, got %d", seq)
+	}
+
+	if closeErr := s.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+
+	s2, openErr := OpenStore(path, layout)
+	if openErr != nil {
+		t.Fatalf("OpenStore: %v", openErr)
+	}
+	defer s2.Close()
+
+	recovered := s2.SeqReadBegin(idx)
+	if recovered&1 != 0 {
+		t.Errorf("seq after recovery = %d, want even", recovered)
+	}
+	if recovered != seq+1 {
+		t.Errorf("seq after recovery = %d, want %d", recovered, seq+1)
+	}
+	if !s2.SeqReadValid(idx, recovered) {
+		t.Error("SeqReadValid should be true after recovery")
+	}
+}
+
+func TestRecoverSeqlocks_MultipleRecords(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx0, err := s.Append()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx1, err := s.Append()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx2, err := s.Append()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// record 0: clean (full write cycle)
+	s.SeqBeginWrite(idx0)
+	s.SeqEndWrite(idx0)
+
+	// record 1: stuck (begin write, no end)
+	s.SeqBeginWrite(idx1)
+
+	// record 2: untouched
+
+	if closeErr := s.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+
+	s2, err := OpenStore(path, layout)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer s2.Close()
+
+	seq0 := s2.SeqReadBegin(idx0)
+	if seq0 != 2 {
+		t.Errorf("record 0 seq = %d, want 2 (was clean)", seq0)
+	}
+
+	seq1 := s2.SeqReadBegin(idx1)
+	if seq1&1 != 0 {
+		t.Errorf("record 1 seq = %d, want even (was stuck)", seq1)
+	}
+
+	seq2 := s2.SeqReadBegin(idx2)
+	if seq2 != 0 {
+		t.Errorf("record 2 seq = %d, want 0 (untouched)", seq2)
+	}
+}
+
+func TestRecoverSeqlocks_NoRecords(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closeErr := s.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+
+	s2, err := OpenStore(path, layout)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	defer s2.Close()
+
+	if s2.Len() != 0 {
+		t.Errorf("Len = %d, want 0", s2.Len())
+	}
+}
+
+func TestRecoverSeqlocks_AllClean(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 5; i++ {
+		idx, err := s.Append()
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.SeqBeginWrite(idx)
+		s.SeqEndWrite(idx)
+	}
+
+	if closeErr := s.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+
+	s2, openErr := OpenStore(path, layout)
+	if openErr != nil {
+		t.Fatalf("OpenStore: %v", openErr)
+	}
+	defer s2.Close()
+
+	for i := 0; i < 5; i++ {
+		seq := s2.SeqReadBegin(i)
+		if seq != 2 {
+			t.Errorf("record %d seq = %d, want 2", i, seq)
+		}
+	}
+}
