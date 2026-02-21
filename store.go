@@ -28,6 +28,7 @@ type Store struct {
 	header         *Header
 	recordCountPtr *atomic.Uint64
 	capacityPtr    *atomic.Uint64
+	lockFile       *os.File
 	path           string
 	recordSize     int
 	appendMu       sync.Mutex
@@ -35,7 +36,12 @@ type Store struct {
 }
 
 // CreateStore creates a new mmapforge file at path with the given layout and schema version.
-func CreateStore(path string, layout *RecordLayout, schemaVersion uint32) (*Store, error) {
+func CreateStore(path string, layout *RecordLayout, schemaVersion uint32, opts ...StoreOption) (*Store, error) {
+	cfg := applyOptions(opts)
+	if cfg.readOnly {
+		return nil, fmt.Errorf("mmapforge: cannot create store in read-only mode")
+	}
+
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("mmapforge: create %s: %w", path, err)
@@ -81,12 +87,30 @@ func CreateStore(path string, layout *RecordLayout, schemaVersion uint32) (*Stor
 
 	s.recordCountPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + offsetRecordCount))
 	s.capacityPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + offsetCapacity))
+
+	if cfg.oneWriter {
+		if lockErr := s.acquireLock(); lockErr != nil {
+			regionErr := region.Close()
+			return nil, errors.Join(
+				fmt.Errorf("mmapforge: acquire lock: %w", lockErr),
+				fmt.Errorf("mmapforge: close %s: %w", path, regionErr),
+			)
+		}
+	}
+
 	return s, nil
 }
 
 // OpenStore opens an existing mmapforge file and validates the schema hash.
-func OpenStore(path string, layout *RecordLayout) (*Store, error) {
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
+func OpenStore(path string, layout *RecordLayout, opts ...StoreOption) (*Store, error) {
+	cfg := applyOptions(opts)
+
+	flag := os.O_RDWR
+	if cfg.readOnly {
+		flag = os.O_RDONLY
+	}
+
+	f, err := os.OpenFile(path, flag, 0)
 	if err != nil {
 		return nil, fmt.Errorf("mmapforge: open %s: %w", path, err)
 	}
@@ -109,7 +133,8 @@ func OpenStore(path string, layout *RecordLayout) (*Store, error) {
 		)
 	}
 
-	region, err := Map(f, fileSize, true, Random, StoreReserveVA)
+	writable := !cfg.readOnly
+	region, err := Map(f, fileSize, writable, Random, StoreReserveVA)
 	if err != nil {
 		closeErr := f.Close()
 		return nil, errors.Join(
@@ -141,13 +166,27 @@ func OpenStore(path string, layout *RecordLayout) (*Store, error) {
 		layout:     layout,
 		header:     h,
 		path:       path,
-		writable:   true,
+		writable:   writable,
 		recordSize: int(layout.RecordSize),
 	}
 
 	s.recordCountPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + offsetRecordCount))
 	s.capacityPtr = (*atomic.Uint64)(unsafe.Pointer(s.region.base + offsetCapacity))
-	s.recoverSeqlocks()
+
+	if writable {
+		s.recoverSeqlocks()
+	}
+
+	if cfg.oneWriter {
+		if cfg.readOnly {
+			return nil, fmt.Errorf("mmapforge: WithOneWriter and WithReadOnly are mutually exclusive")
+		}
+		if err := s.acquireLock(); err != nil {
+			_ = region.Close()
+			return nil, err
+		}
+	}
+
 	return s, nil
 }
 
@@ -160,24 +199,29 @@ func (s *Store) Close() error {
 	if s.writable {
 		if err := s.flushHeader(); err != nil {
 			closeErr := s.region.Close()
+			lockErr := s.releaseLock()
 			return errors.Join(
 				fmt.Errorf("mmapforge: flush header: %w", err),
 				fmt.Errorf("mmapforge: close %s: %w", s.path, closeErr),
+				fmt.Errorf("mmapforge: release lock: %w", lockErr),
 			)
 		}
 
 		if syncErr := s.region.Sync(); syncErr != nil {
 			closeErr := s.region.Close()
+			lockErr := s.releaseLock()
 			return errors.Join(
 				fmt.Errorf("mmapforge: sync: %w", syncErr),
 				fmt.Errorf("mmapforge: close %s: %w", s.path, closeErr),
+				fmt.Errorf("mmapforge: release lock: %w", lockErr),
 			)
 		}
 	}
 
 	err := s.region.Close()
 	s.region = nil
-	return err
+	lockErr := s.releaseLock()
+	return errors.Join(err, lockErr)
 }
 
 // Sync flushes the header and dirty pages to disk.
@@ -293,4 +337,30 @@ func (s *Store) recoverSeqlocks() int {
 	}
 
 	return recovered
+}
+
+// acquireLock creates/opens the sidecar .lock file and acquires an exclusive flock.
+func (s *Store) acquireLock() error {
+	lockPath := s.path + ".lock"
+	lf, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return fmt.Errorf("mmapforge: open lock file %s: %w", lockPath, err)
+	}
+	if err := flockExclusive(lf); err != nil {
+		_ = lf.Close()
+		return err
+	}
+	s.lockFile = lf
+	return nil
+}
+
+// releaseLock releases the flock and closes the sidecar lock file.
+func (s *Store) releaseLock() error {
+	if s.lockFile == nil {
+		return nil
+	}
+	unlockErr := funlock(s.lockFile)
+	closeErr := s.lockFile.Close()
+	s.lockFile = nil
+	return errors.Join(unlockErr, closeErr)
 }

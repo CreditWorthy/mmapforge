@@ -24,9 +24,9 @@ type {{ .StoreName }} struct {
 }
 
 // {{ .NewStoreFuncName }} creates a new {{ .Name }} store at the given path.
-func {{ .NewStoreFuncName }}(path string) (*{{ .StoreName }}, error) {
+func {{ .NewStoreFuncName }}(path string, opts ...mmapforge.StoreOption) (*{{ .StoreName }}, error) {
 	layout := {{ .LayoutFuncName }}()
-	s, err := mmapforge.CreateStore(path, layout, {{ .SchemaVersion }})
+	s, err := mmapforge.CreateStore(path, layout, {{ .SchemaVersion }}, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -34,9 +34,9 @@ func {{ .NewStoreFuncName }}(path string) (*{{ .StoreName }}, error) {
 }
 
 // {{ .OpenStoreFuncName }} opens an existing {{ .Name }} store at the given path.
-func {{ .OpenStoreFuncName }}(path string) (*{{ .StoreName }}, error) {
+func {{ .OpenStoreFuncName }}(path string, opts ...mmapforge.StoreOption) (*{{ .StoreName }}, error) {
 	layout := {{ .LayoutFuncName }}()
-	s, err := mmapforge.OpenStore(path, layout)
+	s, err := mmapforge.OpenStore(path, layout, opts...)
 	if err != nil {
 		return nil, err
 	}

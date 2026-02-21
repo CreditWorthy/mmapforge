@@ -46,6 +46,9 @@ import (
 // Increments the 8-byte sequence counter at offset 0 of the record to an odd value.
 // Caller must call SeqEndWrite when the write is complete.
 func (s *Store) SeqBeginWrite(idx int) {
+	if !s.writable {
+		panic("mmapforge: SeqBeginWrite called on read-only store")
+	}
 	off := HeaderSize + idx*s.recordSize
 	ptr := (*atomic.Uint64)(unsafe.Pointer(s.region.base + uintptr(off)))
 	ptr.Add(1)

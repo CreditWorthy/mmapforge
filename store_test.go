@@ -1009,3 +1009,361 @@ func TestRecoverSeqlocks_AllClean(t *testing.T) {
 		}
 	}
 }
+
+// --- WithReadOnly tests ---
+
+func TestCreateStore_WithReadOnly(t *testing.T) {
+	_, err := CreateStore(tempPath(t), testLayout(), 1, WithReadOnly())
+	if err == nil {
+		t.Fatal("expected error creating store in read-only mode")
+	}
+}
+
+func TestOpenStore_WithReadOnly(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	if _, appendErr := s.Append(); appendErr != nil {
+		t.Fatalf("Append: %v", appendErr)
+	}
+	s.Close()
+
+	ro, err := OpenStore(path, layout, WithReadOnly())
+	if err != nil {
+		t.Fatalf("OpenStore ReadOnly: %v", err)
+	}
+	defer ro.Close()
+
+	if ro.Len() != 1 {
+		t.Errorf("Len = %d, want 1", ro.Len())
+	}
+}
+
+func TestOpenStore_WithReadOnly_AppendFails(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	s.Close()
+
+	ro, err := OpenStore(path, layout, WithReadOnly())
+	if err != nil {
+		t.Fatalf("OpenStore ReadOnly: %v", err)
+	}
+	defer ro.Close()
+
+	_, appendErr := ro.Append()
+	if appendErr == nil {
+		t.Fatal("expected error appending to read-only store")
+	}
+}
+
+func TestOpenStore_WithReadOnly_SkipsRecoverSeqlocks(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := s.Append()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Leave seqlock stuck (odd)
+	s.SeqBeginWrite(idx)
+	s.Close()
+
+	// Open read-only — should NOT recover the stuck seqlock
+	ro, err := OpenStore(path, layout, WithReadOnly())
+	if err != nil {
+		t.Fatalf("OpenStore ReadOnly: %v", err)
+	}
+	defer ro.Close()
+
+	seq := ro.SeqReadBegin(idx)
+	if seq&1 != 1 {
+		t.Errorf("seq = %d, want odd (read-only should not recover seqlocks)", seq)
+	}
+}
+
+func TestOpenStore_WithReadOnly_CloseSkipsFlushSync(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	saved := saveFuncs()
+
+	ro, err := OpenStore(path, layout, WithReadOnly())
+	if err != nil {
+		t.Fatalf("OpenStore ReadOnly: %v", err)
+	}
+
+	// Inject failures — should not matter for read-only close
+	encodeHeaderFunc = func(_ []byte, _ *Header) error {
+		return fmt.Errorf("injected encode error")
+	}
+	msyncSyscall = func(_, _, _ uintptr) error {
+		return syscall.EIO
+	}
+
+	err = ro.Close()
+	restoreAllFuncs(saved)
+
+	if err != nil {
+		t.Fatalf("read-only Close should not flush/sync, but got error: %v", err)
+	}
+}
+
+func TestOpenStore_WithReadOnly_ReadWorks(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, createErr := CreateStore(path, layout, 1)
+	if createErr != nil {
+		t.Fatal(createErr)
+	}
+	idx, appendErr := s.Append()
+	if appendErr != nil {
+		t.Fatal(appendErr)
+	}
+	if writeErr := s.WriteUint64(idx, 8, 42); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	s.Close()
+
+	ro, openErr := OpenStore(path, layout, WithReadOnly())
+	if openErr != nil {
+		t.Fatalf("OpenStore ReadOnly: %v", openErr)
+	}
+	defer ro.Close()
+
+	val, readErr := ro.ReadUint64(idx, 8)
+	if readErr != nil {
+		t.Fatalf("ReadUint64: %v", readErr)
+	}
+	if val != 42 {
+		t.Errorf("ReadUint64 = %d, want 42", val)
+	}
+}
+
+// --- WithOneWriter tests ---
+
+func TestCreateStore_WithOneWriter(t *testing.T) {
+	path := tempPath(t)
+	s, err := CreateStore(path, testLayout(), 1, WithOneWriter())
+	if err != nil {
+		t.Fatalf("CreateStore WithOneWriter: %v", err)
+	}
+	defer s.Close()
+
+	if s.lockFile == nil {
+		t.Fatal("lockFile should not be nil with WithOneWriter")
+	}
+}
+
+func TestCreateStore_WithOneWriter_SecondFails(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s1, err := CreateStore(path, layout, 1, WithOneWriter())
+	if err != nil {
+		t.Fatalf("first CreateStore: %v", err)
+	}
+	defer s1.Close()
+
+	// Second open with OneWriter on the same path should fail
+	_, err = OpenStore(path, layout, WithOneWriter())
+	if err == nil {
+		t.Fatal("expected error for second one-writer open")
+	}
+}
+
+func TestOpenStore_WithOneWriter(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s2, err := OpenStore(path, layout, WithOneWriter())
+	if err != nil {
+		t.Fatalf("OpenStore WithOneWriter: %v", err)
+	}
+	defer s2.Close()
+
+	if s2.lockFile == nil {
+		t.Fatal("lockFile should not be nil with WithOneWriter")
+	}
+}
+
+func TestOpenStore_WithOneWriter_SecondFails(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s1, err := OpenStore(path, layout, WithOneWriter())
+	if err != nil {
+		t.Fatalf("first OpenStore: %v", err)
+	}
+	defer s1.Close()
+
+	_, err = OpenStore(path, layout, WithOneWriter())
+	if err == nil {
+		t.Fatal("expected error for second one-writer open")
+	}
+}
+
+func TestOpenStore_WithOneWriter_AndReadOnly_MutuallyExclusive(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	_, err = OpenStore(path, layout, WithOneWriter(), WithReadOnly())
+	if err == nil {
+		t.Fatal("expected error for mutually exclusive options")
+	}
+}
+
+func TestOneWriter_LockReleasedOnClose(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s1, err := CreateStore(path, layout, 1, WithOneWriter())
+	if err != nil {
+		t.Fatalf("CreateStore: %v", err)
+	}
+	s1.Close()
+
+	// After close, another writer should succeed
+	s2, err := OpenStore(path, layout, WithOneWriter())
+	if err != nil {
+		t.Fatalf("OpenStore after close should succeed: %v", err)
+	}
+	s2.Close()
+}
+
+func TestClose_WithLock_FlushHeaderFails(t *testing.T) {
+	saved := saveFuncs()
+
+	path := tempPath(t)
+	s, err := CreateStore(path, testLayout(), 1, WithOneWriter())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	encodeHeaderFunc = func(_ []byte, _ *Header) error {
+		return fmt.Errorf("injected encode error")
+	}
+
+	err = s.Close()
+	restoreAllFuncs(saved)
+
+	if err == nil {
+		t.Fatal("expected error when flushHeader fails during Close with lock")
+	}
+}
+
+func TestClose_WithLock_SyncFails(t *testing.T) {
+	saved := saveFuncs()
+
+	path := tempPath(t)
+	s, err := CreateStore(path, testLayout(), 1, WithOneWriter())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msyncSyscall = func(_, _, _ uintptr) error {
+		return syscall.EIO
+	}
+
+	err = s.Close()
+	restoreAllFuncs(saved)
+
+	if err == nil {
+		t.Fatal("expected error when sync fails during Close with lock")
+	}
+}
+
+func TestReleaseLock_NilLockFile(t *testing.T) {
+	s := mustCreateStore(t)
+	defer s.Close()
+
+	// lockFile is nil by default (no WithOneWriter)
+	if err := s.releaseLock(); err != nil {
+		t.Fatalf("releaseLock with nil lockFile should be no-op: %v", err)
+	}
+}
+
+func TestAcquireLock_BadPath(t *testing.T) {
+	s := &Store{path: "/no/such/dir/test.mmf"}
+	if err := s.acquireLock(); err == nil {
+		t.Fatal("expected error for bad lock path")
+	}
+}
+
+func TestCreateStore_WithOneWriter_AcquireLockFails(t *testing.T) {
+	// Use a path where the .lock file can't be created
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "test.mmf.lock")
+
+	// Create a directory where the lock file should go, so OpenFile fails
+	if err := os.MkdirAll(lockPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(dir, "test.mmf")
+	_, err := CreateStore(path, testLayout(), 1, WithOneWriter())
+	if err == nil {
+		t.Fatal("expected error when lock file cannot be created")
+	}
+}
+
+func TestOpenStore_WithOneWriter_AcquireLockFails(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, createErr := CreateStore(path, layout, 1)
+	if createErr != nil {
+		t.Fatal(createErr)
+	}
+	s.Close()
+
+	// Create a directory where the lock file should go
+	lockPath := path + ".lock"
+	if mkdirErr := os.MkdirAll(lockPath, 0755); mkdirErr != nil {
+		t.Fatal(mkdirErr)
+	}
+
+	_, openErr := OpenStore(path, layout, WithOneWriter())
+	if openErr == nil {
+		t.Fatal("expected error when lock file cannot be created")
+	}
+}

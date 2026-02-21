@@ -134,3 +134,31 @@ func TestSeqMultipleRecords(t *testing.T) {
 		t.Errorf("record 1 seq = %d, want 0 (untouched)", seq1)
 	}
 }
+
+func TestSeqBeginWrite_PanicsOnReadOnly(t *testing.T) {
+	path := tempPath(t)
+	layout := testLayout()
+
+	s, err := CreateStore(path, layout, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := s.Append()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	ro, err := OpenStore(path, layout, WithReadOnly())
+	if err != nil {
+		t.Fatalf("OpenStore ReadOnly: %v", err)
+	}
+	defer ro.Close()
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic from SeqBeginWrite on read-only store")
+		}
+	}()
+	ro.SeqBeginWrite(idx)
+}
