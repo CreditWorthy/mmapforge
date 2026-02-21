@@ -6,20 +6,90 @@
 [![Coverage](https://codecov.io/gh/CreditWorthy/mmapforge/branch/main/graph/badge.svg)](https://codecov.io/gh/CreditWorthy/mmapforge)
 [![License](https://img.shields.io/github/license/CreditWorthy/mmapforge)](https://github.com/CreditWorthy/mmapforge/blob/main/LICENSE)
 
-> **Incubating — still a work in progress.**
+> **Incubating - still a work in progress.**
 
 A zero-copy, mmap-backed typed record store for Go. No serialization. No allocation on reads. No external dependencies.
 
 You define a struct, annotate it, run the code generator, and get a fully typed store that reads and writes directly from memory-mapped files. Field access is a single memory load - ~3ns per read on Apple M4 Pro, zero heap allocations.
+
+## Install
+
+```bash
+go install github.com/CreditWorthy/mmapforge/cmd/mmapforge@latest
+```
+
+This installs the `mmapforge` code generator. Then add the library to your project:
+
+```bash
+go get github.com/CreditWorthy/mmapforge
+```
+
+## Usage
+
+### 1. Define your struct
+
+Create a Go file with a struct annotated with `mmap` tags and a `mmapforge:schema` comment:
+
+```go
+package mypackage
+
+//go:generate mmapforge -input types.go
+
+// mmapforge:schema version=1
+type Tick struct {
+    Symbol    string  `mmap:"symbol,64"`
+    Price     float64 `mmap:"price"`
+    Volume    float64 `mmap:"volume"`
+    Timestamp uint64  `mmap:"timestamp"`
+}
+```
+
+String fields take a max size after the name (e.g. `symbol,64` for a 64-byte string). Numeric fields are fixed size.
+
+### 2. Generate the store
+
+```bash
+go generate ./...
+```
+
+This creates a `tick_store.go` file with a fully typed `TickStore` that has `Get`/`Set` methods for every field, plus `Append`, `Len`, `Close`, and `Sync`.
+
+### 3. Use it
+
+```go
+// Create a new store
+store, err := NewTickStore("ticks.mmf")
+if err != nil {
+    log.Fatal(err)
+}
+defer store.Close()
+
+// Append a record
+idx, err := store.Append()
+if err != nil {
+    log.Fatal(err)
+}
+
+// Write fields
+store.SetSymbol(idx, "AAPL")
+store.SetPrice(idx, 189.50)
+store.SetVolume(idx, 52_000_000)
+store.SetTimestamp(idx, uint64(time.Now().UnixNano()))
+
+// Read fields 
+price, err := store.GetPrice(idx)
+```
+
+All reads and writes go directly to the memory-mapped file. No serialization, no copies. Concurrent reads are lock-free via per-record seqlocks.
 
 ## Why
 
 Most storage libraries serialize your data on write and deserialize on read. That costs CPU time and heap allocations. mmapforge skips all of that - your data lives in a flat binary format on disk, memory-mapped into your process. Reading a field is just pointer arithmetic into the mapped region.
 
 This is useful for:
-- **Game state** — thousands of entities updated every tick
-- **Time-series data** — append-only streams of fixed-size records
-- **Caches** — memory-mapped shared state between processes
+- **Game state** - thousands of entities updated every tick
+- **Time-series data** - append-only streams of fixed-size records
+- **Caches** - memory-mapped shared state between processes
 - **Anything where read speed matters more than flexibility**
 
 ## Benchmarks
@@ -115,3 +185,23 @@ go test ./... -bench=. -benchmem
 | os.File ReadAt | 319.6 | **179× slower** |
 | mmap WriteUint64 | 1.81 | — |
 | os.File WriteAt | 609.6 | **337× slower** |
+
+## Crash Safety
+
+mmapforge is a **datastore primitive, not a database**. It provides fast, typed, memory-mapped storage but makes no durability or transactional guarantees. Here is what happens if the process dies unexpectedly:
+
+### What's protected
+
+- **Seqlock recovery** - if a writer crashes mid-write, the per-record sequence counter gets stuck at an odd value. On the next `OpenStore`, all stuck counters are automatically reset so readers don't spin forever. The data in that record may be partially written (torn).
+
+### What's not protected
+
+- **Torn multi-field writes** - writing multiple fields is not atomic. If the process dies mid-write, some fields may have the new value and others the old value. Single aligned 8-byte writes (`WriteUint64`, `WriteFloat64`, etc.) are hardware-atomic on x86/arm64.
+- **Stale header** - the on-disk header `RecordCount` is updated on `Sync()` or `Close()`. If neither is called before a crash, the header may report fewer records than were actually appended. The data is present in the file but the count is stale.
+- **No fsync on write** - writes go to the kernel page cache via mmap. They are not flushed to stable storage until `Sync()` is called or the kernel decides to write back dirty pages. A power failure (not just process crash) can lose recently written data.
+
+### Recommendations
+
+- Call `Sync()` periodically if you need durability.
+- Use mmapforge for hot in-process data (caches, game state, real-time feeds), not as a primary durable store.
+- If you need crash-safe transactions, put a WAL or database in front.
