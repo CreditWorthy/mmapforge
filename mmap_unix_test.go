@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -1238,6 +1239,51 @@ func TestMsyncSyscallSuccess(t *testing.T) {
 	if err := msyncSyscall(addr, uintptr(pageSize), uintptr(syscall.MS_SYNC)); err != nil {
 		t.Errorf("msyncSyscall on valid mapping: %v", err)
 	}
+}
+
+func TestRegionFinalizerCleansUp(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-finalizer-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := Map(f, 1, true, Sequential)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+
+	if r.size.Load() == 0 {
+		t.Fatal("expected non-zero size after Map")
+	}
+
+	// Clear the real finalizer so GC doesn't race, then call it directly.
+	runtime.SetFinalizer(r, nil)
+	regionFinalizer(r)
+
+	if r.size.Load() != 0 {
+		t.Errorf("size after finalizer = %d, want 0", r.size.Load())
+	}
+	if r.maxVA != 0 {
+		t.Errorf("maxVA after finalizer = %d, want 0", r.maxVA)
+	}
+}
+
+func TestRegionFinalizerNoop(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "mmapforge-finalizer-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := Map(f, 1, true, Sequential)
+	if err != nil {
+		t.Fatalf("Map: %v", err)
+	}
+
+	// Close first, then call finalizer - should be a no-op.
+	if closeErr := r.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	regionFinalizer(r)
 }
 
 func TestMsyncSyscallError(t *testing.T) {

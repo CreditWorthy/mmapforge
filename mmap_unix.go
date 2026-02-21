@@ -26,6 +26,7 @@ const DefaultMaxVA = 1 << 30
 // functions can be overridden for testing
 var mmapFixedFunc = mmapFixed
 var madviseFunc = madviseAt
+var regionFinalizerFunc = regionFinalizer
 var mmapSyscall = func(addr, length, prot, flags, fd, offset uintptr) (uintptr, error) {
 	r, _, errno := syscall.Syscall6(syscall.SYS_MMAP, addr, length, prot, flags, fd, offset)
 	if errno != 0 {
@@ -168,12 +169,7 @@ func Map(f *os.File, size int, writable bool, access AccessPattern, reserveVA ..
 
 	r.size.Store(int64(size))
 	rp := &r
-	runtime.SetFinalizer(rp, func(r *Region) {
-		if r.size.Load() != 0 || r.maxVA != 0 {
-			_, _ = fmt.Fprintf(os.Stderr, "mmapforge: Region for %s was garbage collected without Close()\n", r.file.Name())
-			_ = r.Close()
-		}
-	})
+	runtime.SetFinalizer(rp, regionFinalizerFunc)
 	return rp, nil
 }
 
@@ -286,6 +282,13 @@ func (r *Region) Unmap() error {
 		return fmt.Errorf("mmapforge: unmap: %w", err)
 	}
 	return nil
+}
+
+func regionFinalizer(r *Region) {
+	if r.size.Load() != 0 || r.maxVA != 0 {
+		_, _ = fmt.Fprintf(os.Stderr, "mmapforge: Region for %s was garbage collected without Close()\n", r.file.Name())
+		_ = r.Close()
+	}
 }
 
 // Close unmaps the region and closes the file descriptor.
