@@ -14,4 +14,5 @@ var (
 	ErrClosed         = errors.New("mmapforge: store is closed")
 	ErrInvalidBool    = errors.New("mmapforge: invalid bool value")
 	ErrTypeMismatch   = errors.New("mmapforge: field type changed during migration")
+	ErrLocked         = errors.New("mmapforge: store is locked by another writer")
 )

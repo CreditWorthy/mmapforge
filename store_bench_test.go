@@ -348,6 +348,235 @@ func BenchmarkReadMultiField(b *testing.B) {
 	}
 }
 
+func benchStoreReadOnly(b *testing.B) *Store {
+	b.Helper()
+	path := filepath.Join(b.TempDir(), "bench_ro.mmf")
+	layout := benchLayout()
+	s, createErr := CreateStore(path, layout, 1)
+	if createErr != nil {
+		b.Fatalf("CreateStore: %v", createErr)
+	}
+	offID := fieldOffset("id")
+	offVal := fieldOffset("value")
+	offScore := fieldOffset("score")
+	nf := benchNameField()
+	var seedI32 int32
+	for i := 0; i < benchRecords; i++ {
+		if _, appendErr := s.Append(); appendErr != nil {
+			b.Fatalf("Append: %v", appendErr)
+		}
+		if writeErr := s.WriteUint64(i, offID, uint64(i)); writeErr != nil {
+			b.Fatalf("WriteUint64: %v", writeErr)
+		}
+		if writeErr := s.WriteFloat64(i, offVal, float64(i)); writeErr != nil {
+			b.Fatalf("WriteFloat64: %v", writeErr)
+		}
+		if writeErr := s.WriteInt32(i, offScore, seedI32); writeErr != nil {
+			b.Fatalf("WriteInt32: %v", writeErr)
+		}
+		seedI32++
+		if writeErr := s.WriteString(i, nf.Offset, nf.Size, nf.MaxSize, "bench"); writeErr != nil {
+			b.Fatalf("WriteString: %v", writeErr)
+		}
+	}
+	s.Close()
+
+	ro, openErr := OpenStore(path, layout, WithReadOnly())
+	if openErr != nil {
+		b.Fatalf("OpenStore ReadOnly: %v", openErr)
+	}
+	return ro
+}
+
+func BenchmarkReadOnly_ReadUint64(b *testing.B) {
+	s := benchStoreReadOnly(b)
+	defer s.Close()
+	off := fieldOffset("id")
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, readErr := s.ReadUint64(i%benchRecords, off); readErr != nil {
+			b.Fatal(readErr)
+		}
+	}
+}
+
+func BenchmarkReadOnly_ReadFloat64(b *testing.B) {
+	s := benchStoreReadOnly(b)
+	defer s.Close()
+	off := fieldOffset("value")
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, readErr := s.ReadFloat64(i%benchRecords, off); readErr != nil {
+			b.Fatal(readErr)
+		}
+	}
+}
+
+func BenchmarkReadOnly_ReadString(b *testing.B) {
+	s := benchStoreReadOnly(b)
+	defer s.Close()
+	nf := benchNameField()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, readErr := s.ReadString(i%benchRecords, nf.Offset, nf.Size, nf.MaxSize); readErr != nil {
+			b.Fatal(readErr)
+		}
+	}
+}
+
+func BenchmarkReadOnly_ReadMultiField(b *testing.B) {
+	s := benchStoreReadOnly(b)
+	defer s.Close()
+	offID := fieldOffset("id")
+	offVal := fieldOffset("value")
+	offScore := fieldOffset("score")
+	nf := benchNameField()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		idx := i % benchRecords
+		if _, readErr := s.ReadUint64(idx, offID); readErr != nil {
+			b.Fatal(readErr)
+		}
+		if _, readErr := s.ReadFloat64(idx, offVal); readErr != nil {
+			b.Fatal(readErr)
+		}
+		if _, readErr := s.ReadInt32(idx, offScore); readErr != nil {
+			b.Fatal(readErr)
+		}
+		if _, readErr := s.ReadString(idx, nf.Offset, nf.Size, nf.MaxSize); readErr != nil {
+			b.Fatal(readErr)
+		}
+	}
+}
+
+func benchStoreOneWriter(b *testing.B) *Store {
+	b.Helper()
+	path := filepath.Join(b.TempDir(), "bench_ow.mmf")
+	s, createErr := CreateStore(path, benchLayout(), 1, WithOneWriter())
+	if createErr != nil {
+		b.Fatalf("CreateStore: %v", createErr)
+	}
+	for i := 0; i < benchRecords; i++ {
+		if _, appendErr := s.Append(); appendErr != nil {
+			b.Fatalf("Append: %v", appendErr)
+		}
+	}
+	return s
+}
+
+func BenchmarkOneWriter_WriteUint64(b *testing.B) {
+	s := benchStoreOneWriter(b)
+	defer s.Close()
+	off := fieldOffset("id")
+	b.ResetTimer()
+	b.ReportAllocs()
+	var v uint64
+	for i := 0; i < b.N; i++ {
+		v++
+		if writeErr := s.WriteUint64(i%benchRecords, off, v); writeErr != nil {
+			b.Fatal(writeErr)
+		}
+	}
+}
+
+func BenchmarkOneWriter_WriteFloat64(b *testing.B) {
+	s := benchStoreOneWriter(b)
+	defer s.Close()
+	off := fieldOffset("value")
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if writeErr := s.WriteFloat64(i%benchRecords, off, float64(i)); writeErr != nil {
+			b.Fatal(writeErr)
+		}
+	}
+}
+
+func BenchmarkOneWriter_WriteString(b *testing.B) {
+	s := benchStoreOneWriter(b)
+	defer s.Close()
+	nf := benchNameField()
+	val := "benchmark-test-string"
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if writeErr := s.WriteString(i%benchRecords, nf.Offset, nf.Size, nf.MaxSize, val); writeErr != nil {
+			b.Fatal(writeErr)
+		}
+	}
+}
+
+func BenchmarkOneWriter_WriteMultiField(b *testing.B) {
+	s := benchStoreOneWriter(b)
+	defer s.Close()
+	offID := fieldOffset("id")
+	offVal := fieldOffset("value")
+	offScore := fieldOffset("score")
+	nf := benchNameField()
+	val := "test"
+	b.ResetTimer()
+	b.ReportAllocs()
+	var wu64 uint64
+	var wi32 int32
+	for i := 0; i < b.N; i++ {
+		idx := i % benchRecords
+		if writeErr := s.WriteUint64(idx, offID, wu64); writeErr != nil {
+			b.Fatal(writeErr)
+		}
+		if writeErr := s.WriteFloat64(idx, offVal, float64(i)); writeErr != nil {
+			b.Fatal(writeErr)
+		}
+		if writeErr := s.WriteInt32(idx, offScore, wi32); writeErr != nil {
+			b.Fatal(writeErr)
+		}
+		wu64++
+		wi32++
+		if writeErr := s.WriteString(idx, nf.Offset, nf.Size, nf.MaxSize, val); writeErr != nil {
+			b.Fatal(writeErr)
+		}
+	}
+}
+
+func BenchmarkOneWriter_Append(b *testing.B) {
+	path := filepath.Join(b.TempDir(), "bench_ow_append.mmf")
+	lay := benchLayout()
+	s, createErr := CreateStore(path, lay, 1, WithOneWriter())
+	if createErr != nil {
+		b.Fatalf("CreateStore: %v", createErr)
+	}
+	defer s.Close()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, appendErr := s.Append(); appendErr != nil {
+			b.StopTimer()
+			s.Close()
+			os.Remove(path)
+			s, createErr = CreateStore(path, lay, 1, WithOneWriter())
+			if createErr != nil {
+				b.Fatalf("CreateStore: %v", createErr)
+			}
+			b.StartTimer()
+		}
+	}
+}
+
+func BenchmarkOneWriter_SeqWriteCycle(b *testing.B) {
+	s := benchStoreOneWriter(b)
+	defer s.Close()
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		idx := i % benchRecords
+		s.SeqBeginWrite(idx)
+		s.SeqEndWrite(idx)
+	}
+}
+
 func BenchmarkWriteMultiField(b *testing.B) {
 	s := benchStore(b)
 	defer s.Close()

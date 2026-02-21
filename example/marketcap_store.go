@@ -25,9 +25,9 @@ type MarketCapStore struct {
 }
 
 // NewMarketCapStore creates a new MarketCap store at the given path.
-func NewMarketCapStore(path string) (*MarketCapStore, error) {
+func NewMarketCapStore(path string, opts ...mmapforge.StoreOption) (*MarketCapStore, error) {
 	layout := MarketCapLayout()
-	s, err := mmapforge.CreateStore(path, layout, 1)
+	s, err := mmapforge.CreateStore(path, layout, 1, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -35,9 +35,9 @@ func NewMarketCapStore(path string) (*MarketCapStore, error) {
 }
 
 // OpenMarketCapStore opens an existing MarketCap store at the given path.
-func OpenMarketCapStore(path string) (*MarketCapStore, error) {
+func OpenMarketCapStore(path string, opts ...mmapforge.StoreOption) (*MarketCapStore, error) {
 	layout := MarketCapLayout()
-	s, err := mmapforge.OpenStore(path, layout)
+	s, err := mmapforge.OpenStore(path, layout, opts...)
 	if err != nil {
 		return nil, err
 	}
